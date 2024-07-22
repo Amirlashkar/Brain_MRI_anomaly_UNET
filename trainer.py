@@ -154,3 +154,75 @@ class Trainer:
         plt.tight_layout()
         plt.show()
 
+    def _iterate_images(self, patient_path:os.PathLike) -> Generator:
+        """
+        Provides image arrays with respect to provided path
+
+        patient_path: path of images
+        """
+
+        images = os.listdir(patient_path)
+        try:
+            images.remove(".DS_Store")
+        except:
+            pass
+
+        for image in images:
+            image_path = os.path.join(patient_path, image)
+            image_arr = functions.read_dc(image_path).pixel_array
+            image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
+            yield image_arr
+
+    def _save_scaler(self, scaler:StandardScaler) -> None:
+        """
+        Saves scaler as pickle file
+
+        scaler: scaler to be saved
+        """
+
+        scaler_path = os.path.join(os.getcwd(), "scaler.pkl")
+        with open(scaler_path, "wb") as file:
+            pickle.dump(scaler, file)
+
+    def _get_train_val(self) -> Tuple[torch.Tensor, List[torch.Tensor], np.ndarray]:
+        """
+        Provides training & val data
+        """
+
+        n_abnormal = self.abnormal_df.shape[0]
+        normal_val = self.normal_df.iloc[-n_abnormal:]
+        train_patients = self.normal_df[:-n_abnormal]
+        val_patients = pd.concat([normal_val, self.abnormal_df], axis=0)
+        val_labels = val_patients["prediction"].to_numpy()
+
+        train_images = []
+        val_images = []
+        for i, patient in enumerate(train_patients["SeriesInstanceUID"]):
+            if i < val_patients.shape[0]:
+                val_patient_path = os.path.join(self.data_path, "data", val_patients.iloc[i]["SeriesInstanceUID"])
+                patient_images = []
+                for image in self._iterate_images(val_patient_path):
+                    patient_images.append(image)
+
+                patient_images = np.array(patient_images, dtype=np.float32)
+                val_images.append(patient_images)
+
+            patient_path = os.path.join(self.data_path, "data", patient)
+            for image in self._iterate_images(patient_path):
+                train_images.append(image)
+
+        train_images = np.array(train_images, dtype=np.float32)
+
+        train_images, scaler = functions.data_scale(train_images)
+        self._save_scaler(scaler)
+        val_images = [
+            functions.data_scale(arr, scaler) for arr in val_images
+        ]
+
+        train_images = torch.tensor(train_images, dtype=torch.float32)
+        val_images = [torch.tensor(images, dtype=torch.float32) for images in val_images]
+        # val_images = val_images[200:212]
+        # val_labels = val_labels[200:212]
+
+        return train_images, val_images, val_labels
+
