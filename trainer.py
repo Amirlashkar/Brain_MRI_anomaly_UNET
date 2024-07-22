@@ -436,3 +436,16 @@ class Trainer:
         disp = ConfusionMatrixDisplay(confusion_matrix=c_matrix, display_labels=[0, 1])
         disp.plot(cmap=plt.cm.Blues)
         plt.savefig("CM.png")
+if __name__ == "__main__":
+    shapes = [
+        (288, 288),
+        # (256, 256),
+    ]
+    protocols = [
+        "T1W_SE",
+        "T2W_FLAIR",
+        # "T2W_TSE"
+    ]
+
+    trainer = Trainer(shapes, protocols)
+    print(trainer.normal_df.shape, trainer.abnormal_df.shape)
