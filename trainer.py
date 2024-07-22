@@ -116,3 +116,41 @@ class Trainer:
 
         return padded_image
 
+    def multi_plot(self, ids:List[str]) -> None:
+        """
+        *** Analytic Function ***
+        Plots slices of multiple patients
+
+        ids: list of patient ids to plot their data
+        """
+
+        max_slices = 0
+        multi_slices = []
+        for id in ids:
+            patient_path = os.path.join(self.data_path, "data", id)
+            slices = os.listdir(patient_path)
+            try:
+                slices.remove(".DS_Store")
+            except:
+                pass
+
+            slices_count = len(slices)
+            max_slices = max_slices if slices_count < max_slices else slices_count
+
+            temp_ls = []
+            for slice in slices:
+                slice_path = os.path.join(patient_path, slice)
+                img = functions.read_dc(slice_path).pixel_array
+                temp_ls.append(img)
+
+            multi_slices.append(temp_ls)
+
+        fig, axs = plt.subplots(len(ids), max_slices, figsize=(15, 5))
+        for i, patient in enumerate(multi_slices):
+            for ind, slice in enumerate(patient):
+                axs[i, ind].imshow(slice, aspect="auto", cmap="gray")
+                axs[i, ind].axis('off')
+
+        plt.tight_layout()
+        plt.show()
+
