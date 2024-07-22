@@ -20,6 +20,7 @@ class Trainer:
         self.train_csv = self._get_train_csv()
         self.detail_dict = self.detailing(self.train_csv)
         self.train_csv = self.filter_data(self.train_csv, chosen_shapes, chosen_protocols)
+        self.normal_df, self.abnormal_df = self.separate_df(self.train_csv)
 
     def _get_train_csv(self) -> pd.DataFrame:
         """
@@ -29,6 +30,18 @@ class Trainer:
         train_csv_path = os.path.join(self.data_path, "train.csv")
         train_csv = pd.read_csv(train_csv_path)
         return train_csv
+
+    def separate_df(self, train_csv: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Reads train.csv then returns two dataframe of only normal and abnormal class separatly
+
+        train_csv: data with patient ids
+        """
+
+        normal_df = train_csv[train_csv["prediction"] == 0]
+        abnormal_df = train_csv[train_csv["prediction"] == 1]
+        return normal_df, abnormal_df
+
     def detailing(self, data:pd.DataFrame) -> dict:
         """
         Creates a dictionary of patient ids on keys and values of another dictionary carrying some detail
