@@ -98,3 +98,21 @@ class Trainer:
         data_ = data_[data_["SeriesInstanceUID"].isin(chosens)]
         return data_
 
+    def add_padding(self, image: np.ndarray, target_size=(288, 288)) -> np.ndarray:
+        """
+        Takes a 256*256 image and gives 288*288 image back
+
+        image: 256*256 shape image
+        """
+
+        original_size = image.shape
+
+        top = (target_size[0] - original_size[0]) // 2
+        bottom = target_size[0] - original_size[0] - top
+        left = (target_size[1] - original_size[1]) // 2
+        right = target_size[1] - original_size[1] - left
+
+        padded_image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
+
+        return padded_image
+
