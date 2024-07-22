@@ -349,3 +349,90 @@ class Trainer:
         self.save_thresholds(mse_, ssim_, nrmse_, cc_)
         self._save_model(model)
 
+    def _load_thresholds(self) -> Tuple:
+        """
+        Loads Avg and Std on each criteria from file
+        """
+
+        thresholds_path = os.path.join(os.getcwd(), "thresholds.pkl")
+        with open(thresholds_path, "rb") as file:
+            (mse_avg, mse_std,
+            ssim_avg, ssim_std,
+            nrmse_avg, nrmse_std,
+            cc_avg, cc_std) = pickle.load(file)
+
+        return (mse_avg, mse_std,
+            ssim_avg, ssim_std,
+            nrmse_avg, nrmse_std,
+            cc_avg, cc_std)
+
+    def predict(self, model:components.AutoEncoder, patients_image:List[np.ndarray], criterias:Tuple) -> np.ndarray:
+        main_predictions = []
+        for i, patient in enumerate(patients_image):
+            print(f"{i} from {len(patients_image)}")
+            reconstructs = model(patient)
+            mse, ssim, nrmse, cc = self.compare_images(patient, reconstructs)
+
+            (mse_avg, mse_std,
+            ssim_avg, ssim_std,
+            nrmse_avg, nrmse_std,
+            cc_avg, cc_std) = criterias
+
+            anomaly_degrees = []
+            for i in range(len(mse)):
+                mse_ = mse[i]
+                ssim_ = ssim[i]
+                nrmse_ = nrmse[i]
+                cc_ = cc[i]
+
+                anomaly_degree = 0
+
+                if not (mse_avg - mse_std < mse_ < mse_avg + mse_std):
+                    print("mse")
+                    anomaly_degree =+ 1
+
+                if not (ssim_avg - ssim_std < ssim_ < ssim_avg + ssim_std):
+                    anomaly_degree =+ 1
+
+                if not (nrmse_avg - nrmse_std < nrmse_ < nrmse_avg + nrmse_std):
+                    print("nrmse")
+                    anomaly_degree =+ 1
+
+                if not (cc_avg - cc_std < cc_ < cc_avg + cc_std):
+                    print("cc")
+                    anomaly_degree =+ 1
+
+                anomaly_degrees.append(anomaly_degree)
+
+                first_predictions = []
+                for degree in anomaly_degrees:
+                    if degree > 0:
+                        first_predictions.append(1)
+                    else:
+                        first_predictions.append(0)
+
+            second_prediction = np.array(first_predictions, dtype=np.int8).sum()
+            if second_prediction >= ANOMALY_LIMIT:
+                main_predictions.append(1)
+            else:
+                main_predictions.append(0)
+
+        return np.array(main_predictions, dtype=np.int8)
+
+    def inferences(self):
+        """
+        Calculates inferences of model on validation data
+        """
+
+        model_path = os.path.join(os.getcwd(), "model.pth")
+        model = components.AutoEncoder().to(self.device)
+        model.load_state_dict(torch.load(model_path))
+
+        _, val_images, val_labels = self._get_train_val()
+        criterias = self._load_thresholds()
+
+        predictions = self.predict(model, val_images, criterias)
+        c_matrix = confusion_matrix(val_labels, predictions)
+        disp = ConfusionMatrixDisplay(confusion_matrix=c_matrix, display_labels=[0, 1])
+        disp.plot(cmap=plt.cm.Blues)
+        plt.savefig("CM.png")
