@@ -19,6 +19,7 @@ class Trainer:
         self.data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge")
         self.train_csv = self._get_train_csv()
         self.detail_dict = self.detailing(self.train_csv)
+        self.train_csv = self.filter_data(self.train_csv, chosen_shapes, chosen_protocols)
 
     def _get_train_csv(self) -> pd.DataFrame:
         """
@@ -63,4 +64,24 @@ class Trainer:
             }
 
         return detail_dict
+
+    def filter_data(self, data:pd.DataFrame, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> pd.DataFrame:
+        """
+        Filters patients id df by detail_dict and with respect to chosen parameters
+
+        data: patients id df
+        chosen_shape: images shape to keep
+        chosen_protocol: images protocol to keep
+        """
+
+        chosens = []
+        for patient_id, dict_ in self.detail_dict.items():
+            shape = dict_["shape"]
+            protocol = dict_["protocol"]
+            if shape in chosen_shapes and protocol in chosen_protocols:
+                chosens.append(patient_id)
+
+        data_ = data.copy()
+        data_ = data_[data_["SeriesInstanceUID"].isin(chosens)]
+        return data_
 
