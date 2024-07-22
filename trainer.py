@@ -22,6 +22,11 @@ class Trainer:
         self.train_csv = self.filter_data(self.train_csv, chosen_shapes, chosen_protocols)
         self.normal_df, self.abnormal_df = self.separate_df(self.train_csv)
 
+        self.train:Optional[np.ndarray] = None
+        self.val:Optional[np.ndarray] = None
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     def _get_train_csv(self) -> pd.DataFrame:
         """
         Returns train csv
@@ -225,4 +230,122 @@ class Trainer:
         # val_labels = val_labels[200:212]
 
         return train_images, val_images, val_labels
+
+    def _save_model(self, model:components.AutoEncoder) -> None:
+        """
+        Saves model on specific path
+
+        model: model to be saved
+        """
+
+        saving_path = os.path.join(os.getcwd(), "model.pth")
+        torch.save(model.state_dict(), saving_path)
+
+    def compare_images(self, orig_batch:torch.Tensor, recon_batch:torch.Tensor) -> Tuple:
+        """
+        Compares two set of images by numerical criterias
+
+        orig_batch: original images
+        recon_batch: reconstructed images
+        """
+
+        orig_batch = orig_batch.detach().numpy()
+        recon_batch = recon_batch.detach().numpy()
+
+        mse_ls = []
+        ssim_ls = []
+        nrmse_ls = []
+        cc_ls = []
+        for i, image in enumerate(orig_batch):
+            mse = mean_squared_error(image, recon_batch[i])
+            data_range = image.max() - image.min()
+            ssim, _ = structural_similarity(np.squeeze(image), np.squeeze(recon_batch[i]), full=True, data_range=data_range)
+            nrmse = np.sqrt(mse) / (image.max() - image.min())
+            cc = np.corrcoef(image.flatten(), recon_batch[i].flatten())[0, 1]
+
+            mse_ls.append(mse)
+            ssim_ls.append(ssim)
+            nrmse_ls.append(nrmse)
+            cc_ls.append(cc)
+
+        return mse_ls, ssim_ls, nrmse_ls, cc_ls
+
+    def save_thresholds(self, mse:list, ssim:list, nrmse:list, cc:list) -> None:
+        """
+        Calculating comparision threshold based on inputs avg and standard deviation
+
+        mse: list of images mse
+        ssim: list of images ssim
+        nrmse: list of images nrmse
+        cc: list of images cc
+        """
+
+        mse = np.array(mse)
+        ssim = np.array(ssim)
+        nrmse = np.array(nrmse)
+        cc = np.array(cc)
+
+        mse_avg = np.mean(mse)
+        ssim_avg = np.mean(ssim)
+        nrmse_avg = np.mean(nrmse)
+        cc_avg = np.mean(cc)
+
+        mse_std = np.std(mse)
+        ssim_std = np.std(ssim)
+        nrmse_std = np.std(nrmse)
+        cc_std = np.std(cc)
+
+        thresholds_path = os.path.join(os.getcwd(), "thresholds.pkl")
+        with open(thresholds_path, "wb") as file:
+            pickle.dump((
+                mse_avg, mse_std,
+                ssim_avg, ssim_std,
+                nrmse_avg, nrmse_std,
+                cc_avg, cc_std,
+            ), file)
+
+    def fit(self) -> None:
+        """
+        Fits data into model to train
+        """
+
+        train_images, _, _ = self._get_train_val()
+        train_ds = components.ImageDataset(train_images)
+        train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+
+        model = components.AutoEncoder().to(self.device)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+        mse_ = []
+        ssim_ = []
+        nrmse_ = []
+        cc_ = []
+        for epoch in range(N_EPOCHS):
+            print(f"EPOCH: {epoch+1}")
+            losses = []
+            for batch in train_dl:
+                batch = batch.to(self.device)
+                reconstructs = model(batch)
+                loss = criterion(reconstructs, batch)
+                losses.append(loss)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                # calculating comparing criterias
+                mse, ssim, nrmse, cc = self.compare_images(batch, reconstructs)
+                mse_.extend(mse)
+                ssim_.extend(ssim)
+                nrmse_.extend(nrmse)
+                cc_.extend(cc)
+
+                print(f"Loss: {loss}")
+
+            losses = torch.stack(losses)
+            avg_loss = torch.mean(losses, dim=0)
+            print(f"Avg Epoch Loss: {avg_loss}")
+
+        self.save_thresholds(mse_, ssim_, nrmse_, cc_)
+        self._save_model(model)
 
