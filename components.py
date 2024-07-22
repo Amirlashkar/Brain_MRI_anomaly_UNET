@@ -4,6 +4,20 @@ from torch.utils.data import Dataset
 from constants import *
 
 
+class ImageDataset(Dataset):
+    """
+    Making data accessible
+    """
+
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data[idx]
+        return sample
 
 
 class Encoder(nn.Module):
