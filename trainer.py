@@ -47,6 +47,21 @@ class Trainer:
         abnormal_df = train_csv[train_csv["prediction"] == 1]
         return normal_df, abnormal_df
 
+    def _get_image_sp(self, patient_path:os.PathLike) -> Tuple:
+        files = os.listdir(patient_path)
+        try:
+            files.remove(".DS_Store")
+        except:
+            pass
+
+        sample = files[0]
+        sample_path = os.path.join(patient_path, sample)
+        ds = functions.read_dc(sample_path)
+        shape = ds.pixel_array.shape
+        protocol = ds.SeriesDescription
+
+        return shape, protocol
+
     def detailing(self, data:pd.DataFrame) -> dict:
         """
         Creates a dictionary of patient ids on keys and values of another dictionary carrying some detail
