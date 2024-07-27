@@ -310,23 +310,32 @@ class Trainer:
 
         return model_state, scaler, thresholds, description
 
-    def inferences(self):
+    def inferences(self, pretrained_model_path:Optional[str]=None) -> None:
         """
         Calculates inferences of model on validation data
         """
+        print("\nValidation Phase\n--------------------")
 
-        model_path = os.path.join(os.getcwd(), "model.pth")
-        model = components.AutoEncoder().to(self.device)
-        model.load_state_dict(torch.load(model_path))
+        model_state , scaler, thresholds, _ = self._load_state(self.device, pretrained_model_path)
+        model = models.UNet().to(self.device)
+        model.load_state_dict(model_state)
 
         _, val_images, val_labels = self._get_train_val()
-        criterias = self._load_thresholds()
 
-        predictions = self.predict(model, val_images, criterias)
+        criterion = utils.PXLoss(self.device)
+        predictions = functions.predict(model, val_images, thresholds, criterion, scaler)
         c_matrix = confusion_matrix(val_labels, predictions)
         disp = ConfusionMatrixDisplay(confusion_matrix=c_matrix, display_labels=[0, 1])
         disp.plot(cmap=plt.cm.Blues)
-        plt.savefig("CM.png")
+
+        if self.last_state_path:
+            cm_dir = os.path.dirname(self.last_state_path)
+        else:
+            cm_dir = os.getcwd()
+
+        cm_path = os.path.join(cm_dir, "CM.png")
+        plt.savefig(cm_path)
+
 if __name__ == "__main__":
     shapes = [
         (288, 288),
