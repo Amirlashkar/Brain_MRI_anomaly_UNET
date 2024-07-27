@@ -1,7 +1,8 @@
 from collections.abc import Generator
 from constants import *
-import functions, components
+import functions, utils, models
 from typing import List, Optional, Tuple
+from torch._prims_common import DeviceLikeType
 from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
@@ -11,11 +12,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os, pickle, cv2
 from sklearn.preprocessing import StandardScaler
-from skimage.metrics import mean_squared_error, structural_similarity
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
 
 class Trainer:
     def __init__(self, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> None:
+        self.desc = str(input("Please write a description for your trainer:\n"))
+
         self.data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge")
         self.train_csv = self._get_train_csv()
         self.detail_dict = self.detailing(self.train_csv)
@@ -24,8 +27,17 @@ class Trainer:
 
         self.train:Optional[np.ndarray] = None
         self.val:Optional[np.ndarray] = None
+        self.scaler:Optional[StandardScaler] = None
+        self.last_state_path:Optional[str] = None
 
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # setting training device
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+        else:
+            self.device = torch.device("cpu")
 
     def _get_train_csv(self) -> pd.DataFrame:
         """
@@ -46,6 +58,27 @@ class Trainer:
         normal_df = train_csv[train_csv["prediction"] == 0]
         abnormal_df = train_csv[train_csv["prediction"] == 1]
         return normal_df, abnormal_df
+
+    def _get_image_sp(self, patient_path:os.PathLike) -> Tuple:
+        """
+        Provides image shape and used protocol from patient_path
+
+        patient_path: path of patient images
+        """
+
+        files = os.listdir(patient_path)
+        try:
+            files.remove(".DS_Store")
+        except:
+            pass
+
+        sample = files[0]
+        sample_path = os.path.join(patient_path, sample)
+        ds = functions.read_dc(sample_path)
+        shape = ds.pixel_array.shape
+        protocol = ds.SeriesDescription
+
+        return shape, protocol
 
     def detailing(self, data:pd.DataFrame) -> dict:
         """
@@ -159,36 +192,6 @@ class Trainer:
         plt.tight_layout()
         plt.show()
 
-    def _iterate_images(self, patient_path:os.PathLike) -> Generator:
-        """
-        Provides image arrays with respect to provided path
-
-        patient_path: path of images
-        """
-
-        images = os.listdir(patient_path)
-        try:
-            images.remove(".DS_Store")
-        except:
-            pass
-
-        for image in images:
-            image_path = os.path.join(patient_path, image)
-            image_arr = functions.read_dc(image_path).pixel_array
-            image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
-            yield image_arr
-
-    def _save_scaler(self, scaler:StandardScaler) -> None:
-        """
-        Saves scaler as pickle file
-
-        scaler: scaler to be saved
-        """
-
-        scaler_path = os.path.join(os.getcwd(), "scaler.pkl")
-        with open(scaler_path, "wb") as file:
-            pickle.dump(scaler, file)
-
     def _get_train_val(self) -> Tuple[torch.Tensor, List[torch.Tensor], np.ndarray]:
         """
         Provides training & val data
@@ -206,236 +209,131 @@ class Trainer:
             if i < val_patients.shape[0]:
                 val_patient_path = os.path.join(self.data_path, "data", val_patients.iloc[i]["SeriesInstanceUID"])
                 patient_images = []
-                for image in self._iterate_images(val_patient_path):
+                for image in functions.iterate_patient(val_patient_path):
                     patient_images.append(image)
 
                 patient_images = np.array(patient_images, dtype=np.float32)
                 val_images.append(patient_images)
 
             patient_path = os.path.join(self.data_path, "data", patient)
-            for image in self._iterate_images(patient_path):
+            for image in functions.iterate_patient(patient_path):
                 train_images.append(image)
 
         train_images = np.array(train_images, dtype=np.float32)
 
-        train_images, scaler = functions.data_scale(train_images)
-        self._save_scaler(scaler)
+        train_images, self.scaler = functions.data_scale(train_images)
         val_images = [
-            functions.data_scale(arr, scaler) for arr in val_images
+            functions.data_scale(arr, self.scaler) for arr in val_images
         ]
 
         train_images = torch.tensor(train_images, dtype=torch.float32)
-        val_images = [torch.tensor(images, dtype=torch.float32) for images in val_images]
         # val_images = val_images[200:212]
         # val_labels = val_labels[200:212]
+        val_images = [torch.tensor(images, dtype=torch.float32).to(self.device) for images in val_images]
 
         return train_images, val_images, val_labels
-
-    def _save_model(self, model:components.AutoEncoder) -> None:
-        """
-        Saves model on specific path
-
-        model: model to be saved
-        """
-
-        saving_path = os.path.join(os.getcwd(), "model.pth")
-        torch.save(model.state_dict(), saving_path)
-
-    def compare_images(self, orig_batch:torch.Tensor, recon_batch:torch.Tensor) -> Tuple:
-        """
-        Compares two set of images by numerical criterias
-
-        orig_batch: original images
-        recon_batch: reconstructed images
-        """
-
-        orig_batch = orig_batch.detach().numpy()
-        recon_batch = recon_batch.detach().numpy()
-
-        mse_ls = []
-        ssim_ls = []
-        nrmse_ls = []
-        cc_ls = []
-        for i, image in enumerate(orig_batch):
-            mse = mean_squared_error(image, recon_batch[i])
-            data_range = image.max() - image.min()
-            ssim, _ = structural_similarity(np.squeeze(image), np.squeeze(recon_batch[i]), full=True, data_range=data_range)
-            nrmse = np.sqrt(mse) / (image.max() - image.min())
-            cc = np.corrcoef(image.flatten(), recon_batch[i].flatten())[0, 1]
-
-            mse_ls.append(mse)
-            ssim_ls.append(ssim)
-            nrmse_ls.append(nrmse)
-            cc_ls.append(cc)
-
-        return mse_ls, ssim_ls, nrmse_ls, cc_ls
-
-    def save_thresholds(self, mse:list, ssim:list, nrmse:list, cc:list) -> None:
-        """
-        Calculating comparision threshold based on inputs avg and standard deviation
-
-        mse: list of images mse
-        ssim: list of images ssim
-        nrmse: list of images nrmse
-        cc: list of images cc
-        """
-
-        mse = np.array(mse)
-        ssim = np.array(ssim)
-        nrmse = np.array(nrmse)
-        cc = np.array(cc)
-
-        mse_avg = np.mean(mse)
-        ssim_avg = np.mean(ssim)
-        nrmse_avg = np.mean(nrmse)
-        cc_avg = np.mean(cc)
-
-        mse_std = np.std(mse)
-        ssim_std = np.std(ssim)
-        nrmse_std = np.std(nrmse)
-        cc_std = np.std(cc)
-
-        thresholds_path = os.path.join(os.getcwd(), "thresholds.pkl")
-        with open(thresholds_path, "wb") as file:
-            pickle.dump((
-                mse_avg, mse_std,
-                ssim_avg, ssim_std,
-                nrmse_avg, nrmse_std,
-                cc_avg, cc_std,
-            ), file)
 
     def fit(self) -> None:
         """
         Fits data into model to train
         """
 
-        train_images, _, _ = self._get_train_val()
-        train_ds = components.ImageDataset(train_images)
-        train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+        print("\nTraining Phase\n--------------------")
 
-        model = components.AutoEncoder().to(self.device)
-        criterion = nn.MSELoss()
+        train_images, _, _ = self._get_train_val()
+        train_ds = utils.ImageDataset(train_images)
+        train_dl = DataLoader(train_ds,
+                              batch_size=BATCH_SIZE,
+                              shuffle=True,
+                              num_workers=DL_WORKERS)
+
+        checkpoints = [int((i/5)*len(train_dl)) for i in range(1, 6)]
+        model = models.UNet().to(self.device)
+        criterion = utils.PXLoss(self.device)
         optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-        mse_ = []
-        ssim_ = []
-        nrmse_ = []
-        cc_ = []
+        anomaly_scores = []
         for epoch in range(N_EPOCHS):
-            print(f"EPOCH: {epoch+1}")
+            print(f"\nEPOCH: {epoch+1}")
             losses = []
-            for batch in train_dl:
+            for i, batch in enumerate(train_dl):
                 batch = batch.to(self.device)
                 reconstructs = model(batch)
-                loss = criterion(reconstructs, batch)
+                d_batch = functions.data_descale(batch, self.scaler)
+                d_reconstructs = functions.data_descale(reconstructs, self.scaler)
+                loss = criterion(d_reconstructs, d_batch)
                 losses.append(loss)
+
+                if epoch > 0:
+                    anomaly_scores.append(loss.item())
+                    if i in checkpoints:
+                        print(f"**Checkpint {checkpoints.index(i)}")
+                        anomaly_scores_ = torch.tensor(anomaly_scores)
+                        thresholds = (torch.mean(anomaly_scores_).item(), torch.std(anomaly_scores_).item())
+
+                        ckp = utils.Checkpointer(model, self.scaler, thresholds)
+                        losses_ = torch.stack(losses)
+                        avg_loss = torch.mean(losses_, dim=0).item()
+
+                        ckp.save(epoch+1, avg_loss, self.desc)
+                        self.last_state_path = ckp.last_state_path
+                        print("State saved!")
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                # calculating comparing criterias
-                mse, ssim, nrmse, cc = self.compare_images(batch, reconstructs)
-                mse_.extend(mse)
-                ssim_.extend(ssim)
-                nrmse_.extend(nrmse)
-                cc_.extend(cc)
-
-                print(f"Loss: {loss}")
+                print(f"Batch {i+1} of {len(train_dl)}|Loss: {'{:.6f}'.format(loss.item())}")
 
             losses = torch.stack(losses)
             avg_loss = torch.mean(losses, dim=0)
             print(f"Avg Epoch Loss: {avg_loss}")
 
-        self.save_thresholds(mse_, ssim_, nrmse_, cc_)
-        self._save_model(model)
-
-    def _load_thresholds(self) -> Tuple:
+    def _load_state(self, device:DeviceLikeType, path:Optional=None) -> Tuple:
         """
-        Loads Avg and Std on each criteria from file
+        Loads state dict from provided path or last saved state if no path provided
+
+        path: wanted state dict path
         """
 
-        thresholds_path = os.path.join(os.getcwd(), "thresholds.pkl")
-        with open(thresholds_path, "rb") as file:
-            (mse_avg, mse_std,
-            ssim_avg, ssim_std,
-            nrmse_avg, nrmse_std,
-            cc_avg, cc_std) = pickle.load(file)
+        if path:
+            state_dict = torch.load(path, map_location=device)
+        else:
+            state_dict = torch.load(self.last_state_path, map_location=device)
 
-        return (mse_avg, mse_std,
-            ssim_avg, ssim_std,
-            nrmse_avg, nrmse_std,
-            cc_avg, cc_std)
+        model_state = state_dict["model_state"]
+        scaler = state_dict["scaler"]
+        thresholds = state_dict["thresholds"]
+        description = state_dict["description"]
 
-    def predict(self, model:components.AutoEncoder, patients_image:List[np.ndarray], criterias:Tuple) -> np.ndarray:
-        main_predictions = []
-        for i, patient in enumerate(patients_image):
-            print(f"{i} from {len(patients_image)}")
-            reconstructs = model(patient)
-            mse, ssim, nrmse, cc = self.compare_images(patient, reconstructs)
+        return model_state, scaler, thresholds, description
 
-            (mse_avg, mse_std,
-            ssim_avg, ssim_std,
-            nrmse_avg, nrmse_std,
-            cc_avg, cc_std) = criterias
-
-            anomaly_degrees = []
-            for i in range(len(mse)):
-                mse_ = mse[i]
-                ssim_ = ssim[i]
-                nrmse_ = nrmse[i]
-                cc_ = cc[i]
-
-                anomaly_degree = 0
-
-                if not (mse_avg - mse_std < mse_ < mse_avg + mse_std):
-                    print("mse")
-                    anomaly_degree =+ 1
-
-                if not (ssim_avg - ssim_std < ssim_ < ssim_avg + ssim_std):
-                    anomaly_degree =+ 1
-
-                if not (nrmse_avg - nrmse_std < nrmse_ < nrmse_avg + nrmse_std):
-                    print("nrmse")
-                    anomaly_degree =+ 1
-
-                if not (cc_avg - cc_std < cc_ < cc_avg + cc_std):
-                    print("cc")
-                    anomaly_degree =+ 1
-
-                anomaly_degrees.append(anomaly_degree)
-
-                first_predictions = []
-                for degree in anomaly_degrees:
-                    if degree > 0:
-                        first_predictions.append(1)
-                    else:
-                        first_predictions.append(0)
-
-            second_prediction = np.array(first_predictions, dtype=np.int8).sum()
-            if second_prediction >= ANOMALY_LIMIT:
-                main_predictions.append(1)
-            else:
-                main_predictions.append(0)
-
-        return np.array(main_predictions, dtype=np.int8)
-
-    def inferences(self):
+    def inferences(self, pretrained_model_path:Optional[str]=None) -> None:
         """
         Calculates inferences of model on validation data
         """
+        print("\nValidation Phase\n--------------------")
 
-        model_path = os.path.join(os.getcwd(), "model.pth")
-        model = components.AutoEncoder().to(self.device)
-        model.load_state_dict(torch.load(model_path))
+        model_state , scaler, thresholds, _ = self._load_state(self.device, pretrained_model_path)
+        model = models.UNet().to(self.device)
+        model.load_state_dict(model_state)
 
         _, val_images, val_labels = self._get_train_val()
-        criterias = self._load_thresholds()
 
-        predictions = self.predict(model, val_images, criterias)
+        criterion = utils.PXLoss(self.device)
+        predictions = functions.predict(model, val_images, thresholds, criterion, scaler)
         c_matrix = confusion_matrix(val_labels, predictions)
         disp = ConfusionMatrixDisplay(confusion_matrix=c_matrix, display_labels=[0, 1])
         disp.plot(cmap=plt.cm.Blues)
-        plt.savefig("CM.png")
+
+        if self.last_state_path:
+            cm_dir = os.path.dirname(self.last_state_path)
+        else:
+            cm_dir = os.getcwd()
+
+        cm_path = os.path.join(cm_dir, "CM.png")
+        plt.savefig(cm_path)
+
 if __name__ == "__main__":
     shapes = [
         (288, 288),
@@ -443,9 +341,11 @@ if __name__ == "__main__":
     ]
     protocols = [
         "T1W_SE",
-        "T2W_FLAIR",
+        # "T2W_FLAIR",
         # "T2W_TSE"
     ]
 
     trainer = Trainer(shapes, protocols)
-    print(trainer.normal_df.shape, trainer.abnormal_df.shape)
+    print(f"Normal samples: {trainer.normal_df.shape[0]} | Abnormal samples: {trainer.abnormal_df.shape[0]}")
+    trainer.fit()
+    trainer.inferences()
