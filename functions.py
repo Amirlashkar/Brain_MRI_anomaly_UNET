@@ -61,3 +61,18 @@ def data_descale(data: torch.Tensor, scaler:StandardScaler) -> torch.Tensor:
     data = data.reshape(n_samples, 1, *SHAPE)
 
     return data
+
+def segment_brain(image:np.ndarray) -> np.ndarray:
+    """
+    Create a mask to only conclude most valuable regions of brain
+
+    image: image or batch of images to create mask from it
+    """
+
+    threshold_value = filters.threshold_otsu(image)
+    brain_mask = image > threshold_value
+
+    # brain_mask = morphology.remove_small_objects(brain_mask, min_size=64)
+    # brain_mask = morphology.remove_small_holes(brain_mask, area_threshold=64)
+
+    return brain_mask
