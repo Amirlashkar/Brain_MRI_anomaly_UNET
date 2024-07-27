@@ -24,3 +24,19 @@ class ImageDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         return sample
+
+
+class PXLoss(nn.Module):
+    def __init__(self, device:DeviceLikeType) -> None:
+        super(PXLoss, self).__init__()
+
+        self.device = device
+
+    def forward(self, predictions, targets):
+        targets = targets.cpu().detach().numpy()
+        mask = torch.tensor(functions.segment_brain(targets)).to(self.device)
+        targets = torch.tensor(targets).to(self.device)
+        diff = torch.abs(predictions - targets)
+        loss = torch.mean(torch.pow(diff, 2) * mask)
+
+        return loss
