@@ -29,6 +29,14 @@ class Trainer:
         self.val:Optional[np.ndarray] = None
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # setting training device
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+        else:
+            self.device = torch.device("cpu")
 
     def _get_train_csv(self) -> pd.DataFrame:
         """
