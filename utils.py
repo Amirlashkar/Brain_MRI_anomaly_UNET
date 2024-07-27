@@ -40,3 +40,51 @@ class PXLoss(nn.Module):
         loss = torch.mean(torch.pow(diff, 2) * mask)
 
         return loss
+
+
+class Checkpointer:
+    def __init__(
+        self,
+        model:torch.nn.Module,
+        scaler:StandardScaler,
+        thresholds:Tuple[float, float]
+        ) -> None:
+
+        self.model = model
+        self.scaler = scaler
+        self.thresholds = thresholds
+
+        self.checkpoint_path = os.path.join(os.getcwd(), "checkpoints")
+        self.check_folder()
+
+        self.last_state_path = None
+
+    def check_folder(self):
+        if not os.path.exists(self.checkpoint_path):
+            os.makedirs(self.checkpoint_path)
+
+    def save(self, epoch:int, epoch_loss:float, desc:str):
+        """
+        Main function to save some objects and variables
+
+        epoch: number of current epoch
+        epoch_loss: average loss of current epoch
+        desc: description of model architecture, and etc.
+        """
+
+        now = str(datetime.now()).replace(" ", "_")
+        name = f"{now}_epoch:{epoch}_loss:{'{:.3f}'.format(epoch_loss)}"
+        name = name.replace(":", "_").replace("-", "_")
+        path = os.path.join(self.checkpoint_path, name)
+        os.makedirs(path)
+
+        self.last_state_path = os.path.join(path, "state.pth")
+        state_dict = {
+            "model_arch": str(self.model),
+            "model_state": self.model.state_dict(),
+            "scaler": self.scaler,
+            "thresholds": self.thresholds,
+            "description": desc,
+        }
+
+        torch.save(state_dict, self.last_state_path)
