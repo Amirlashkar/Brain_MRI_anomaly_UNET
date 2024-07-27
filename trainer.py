@@ -209,22 +209,21 @@ class Trainer:
             if i < val_patients.shape[0]:
                 val_patient_path = os.path.join(self.data_path, "data", val_patients.iloc[i]["SeriesInstanceUID"])
                 patient_images = []
-                for image in self._iterate_images(val_patient_path):
+                for image in functions.iterate_patient(val_patient_path):
                     patient_images.append(image)
 
                 patient_images = np.array(patient_images, dtype=np.float32)
                 val_images.append(patient_images)
 
             patient_path = os.path.join(self.data_path, "data", patient)
-            for image in self._iterate_images(patient_path):
+            for image in functions.iterate_patient(patient_path):
                 train_images.append(image)
 
         train_images = np.array(train_images, dtype=np.float32)
 
-        train_images, scaler = functions.data_scale(train_images)
-        self._save_scaler(scaler)
+        train_images, self.scaler = functions.data_scale(train_images)
         val_images = [
-            functions.data_scale(arr, scaler) for arr in val_images
+            functions.data_scale(arr, self.scaler) for arr in val_images
         ]
 
         train_images = torch.tensor(train_images, dtype=torch.float32)
