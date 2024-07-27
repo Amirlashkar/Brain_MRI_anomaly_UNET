@@ -227,9 +227,9 @@ class Trainer:
         ]
 
         train_images = torch.tensor(train_images, dtype=torch.float32)
-        val_images = [torch.tensor(images, dtype=torch.float32) for images in val_images]
         # val_images = val_images[200:212]
         # val_labels = val_labels[200:212]
+        val_images = [torch.tensor(images, dtype=torch.float32).to(self.device) for images in val_images]
 
         return train_images, val_images, val_labels
 
