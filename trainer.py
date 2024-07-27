@@ -27,8 +27,9 @@ class Trainer:
 
         self.train:Optional[np.ndarray] = None
         self.val:Optional[np.ndarray] = None
+        self.scaler:Optional[StandardScaler] = None
+        self.last_state_path:Optional[str] = None
 
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # setting training device
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
