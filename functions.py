@@ -96,3 +96,15 @@ def iterate_patient(patient_path:str) -> Generator:
         image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
         yield image_arr
 
+def plot_org_recon(org, recon):
+    fig, axs = plt.subplots(1, 2, figsize=(15, 5))
+    axs[0].imshow(org, aspect="auto", cmap="gray")
+    axs[0].axis('off')
+    axs[0].set_title("Original")
+    axs[1].imshow(recon, aspect="auto", cmap="gray")
+    axs[1].axis('off')
+    axs[1].set_title("Recon")
+
+    plt.tight_layout()
+    plt.show()
+
