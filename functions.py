@@ -76,3 +76,23 @@ def segment_brain(image:np.ndarray) -> np.ndarray:
     # brain_mask = morphology.remove_small_holes(brain_mask, area_threshold=64)
 
     return brain_mask
+
+def iterate_patient(patient_path:str) -> Generator:
+    """
+    Provides image arrays with respect to provided patient path
+
+    patient_path: path of images
+    """
+
+    images = os.listdir(patient_path)
+    try:
+        images.remove(".DS_Store")
+    except:
+        pass
+
+    for image in images:
+        image_path = os.path.join(patient_path, image)
+        image_arr = read_dc(image_path).pixel_array
+        image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
+        yield image_arr
+
