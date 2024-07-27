@@ -341,9 +341,11 @@ if __name__ == "__main__":
     ]
     protocols = [
         "T1W_SE",
-        "T2W_FLAIR",
+        # "T2W_FLAIR",
         # "T2W_TSE"
     ]
 
     trainer = Trainer(shapes, protocols)
-    print(trainer.normal_df.shape, trainer.abnormal_df.shape)
+    print(f"Normal samples: {trainer.normal_df.shape[0]} | Abnormal samples: {trainer.abnormal_df.shape[0]}")
+    trainer.fit()
+    trainer.inferences()
