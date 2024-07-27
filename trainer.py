@@ -192,36 +192,6 @@ class Trainer:
         plt.tight_layout()
         plt.show()
 
-    def _iterate_images(self, patient_path:os.PathLike) -> Generator:
-        """
-        Provides image arrays with respect to provided path
-
-        patient_path: path of images
-        """
-
-        images = os.listdir(patient_path)
-        try:
-            images.remove(".DS_Store")
-        except:
-            pass
-
-        for image in images:
-            image_path = os.path.join(patient_path, image)
-            image_arr = functions.read_dc(image_path).pixel_array
-            image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
-            yield image_arr
-
-    def _save_scaler(self, scaler:StandardScaler) -> None:
-        """
-        Saves scaler as pickle file
-
-        scaler: scaler to be saved
-        """
-
-        scaler_path = os.path.join(os.getcwd(), "scaler.pkl")
-        with open(scaler_path, "wb") as file:
-            pickle.dump(scaler, file)
-
     def _get_train_val(self) -> Tuple[torch.Tensor, List[torch.Tensor], np.ndarray]:
         """
         Provides training & val data
@@ -263,79 +233,6 @@ class Trainer:
         # val_labels = val_labels[200:212]
 
         return train_images, val_images, val_labels
-
-    def _save_model(self, model:components.AutoEncoder) -> None:
-        """
-        Saves model on specific path
-
-        model: model to be saved
-        """
-
-        saving_path = os.path.join(os.getcwd(), "model.pth")
-        torch.save(model.state_dict(), saving_path)
-
-    def compare_images(self, orig_batch:torch.Tensor, recon_batch:torch.Tensor) -> Tuple:
-        """
-        Compares two set of images by numerical criterias
-
-        orig_batch: original images
-        recon_batch: reconstructed images
-        """
-
-        orig_batch = orig_batch.detach().numpy()
-        recon_batch = recon_batch.detach().numpy()
-
-        mse_ls = []
-        ssim_ls = []
-        nrmse_ls = []
-        cc_ls = []
-        for i, image in enumerate(orig_batch):
-            mse = mean_squared_error(image, recon_batch[i])
-            data_range = image.max() - image.min()
-            ssim, _ = structural_similarity(np.squeeze(image), np.squeeze(recon_batch[i]), full=True, data_range=data_range)
-            nrmse = np.sqrt(mse) / (image.max() - image.min())
-            cc = np.corrcoef(image.flatten(), recon_batch[i].flatten())[0, 1]
-
-            mse_ls.append(mse)
-            ssim_ls.append(ssim)
-            nrmse_ls.append(nrmse)
-            cc_ls.append(cc)
-
-        return mse_ls, ssim_ls, nrmse_ls, cc_ls
-
-    def save_thresholds(self, mse:list, ssim:list, nrmse:list, cc:list) -> None:
-        """
-        Calculating comparision threshold based on inputs avg and standard deviation
-
-        mse: list of images mse
-        ssim: list of images ssim
-        nrmse: list of images nrmse
-        cc: list of images cc
-        """
-
-        mse = np.array(mse)
-        ssim = np.array(ssim)
-        nrmse = np.array(nrmse)
-        cc = np.array(cc)
-
-        mse_avg = np.mean(mse)
-        ssim_avg = np.mean(ssim)
-        nrmse_avg = np.mean(nrmse)
-        cc_avg = np.mean(cc)
-
-        mse_std = np.std(mse)
-        ssim_std = np.std(ssim)
-        nrmse_std = np.std(nrmse)
-        cc_std = np.std(cc)
-
-        thresholds_path = os.path.join(os.getcwd(), "thresholds.pkl")
-        with open(thresholds_path, "wb") as file:
-            pickle.dump((
-                mse_avg, mse_std,
-                ssim_avg, ssim_std,
-                nrmse_avg, nrmse_std,
-                cc_avg, cc_std,
-            ), file)
 
     def fit(self) -> None:
         """
@@ -395,10 +292,6 @@ class Trainer:
             avg_loss = torch.mean(losses, dim=0)
             print(f"Avg Epoch Loss: {avg_loss}")
 
-        self.save_thresholds(mse_, ssim_, nrmse_, cc_)
-        self._save_model(model)
-
-    def _load_thresholds(self) -> Tuple:
         """
         Loads Avg and Std on each criteria from file
         """
@@ -415,58 +308,6 @@ class Trainer:
             nrmse_avg, nrmse_std,
             cc_avg, cc_std)
 
-    def predict(self, model:components.AutoEncoder, patients_image:List[np.ndarray], criterias:Tuple) -> np.ndarray:
-        main_predictions = []
-        for i, patient in enumerate(patients_image):
-            print(f"{i} from {len(patients_image)}")
-            reconstructs = model(patient)
-            mse, ssim, nrmse, cc = self.compare_images(patient, reconstructs)
-
-            (mse_avg, mse_std,
-            ssim_avg, ssim_std,
-            nrmse_avg, nrmse_std,
-            cc_avg, cc_std) = criterias
-
-            anomaly_degrees = []
-            for i in range(len(mse)):
-                mse_ = mse[i]
-                ssim_ = ssim[i]
-                nrmse_ = nrmse[i]
-                cc_ = cc[i]
-
-                anomaly_degree = 0
-
-                if not (mse_avg - mse_std < mse_ < mse_avg + mse_std):
-                    print("mse")
-                    anomaly_degree =+ 1
-
-                if not (ssim_avg - ssim_std < ssim_ < ssim_avg + ssim_std):
-                    anomaly_degree =+ 1
-
-                if not (nrmse_avg - nrmse_std < nrmse_ < nrmse_avg + nrmse_std):
-                    print("nrmse")
-                    anomaly_degree =+ 1
-
-                if not (cc_avg - cc_std < cc_ < cc_avg + cc_std):
-                    print("cc")
-                    anomaly_degree =+ 1
-
-                anomaly_degrees.append(anomaly_degree)
-
-                first_predictions = []
-                for degree in anomaly_degrees:
-                    if degree > 0:
-                        first_predictions.append(1)
-                    else:
-                        first_predictions.append(0)
-
-            second_prediction = np.array(first_predictions, dtype=np.int8).sum()
-            if second_prediction >= ANOMALY_LIMIT:
-                main_predictions.append(1)
-            else:
-                main_predictions.append(0)
-
-        return np.array(main_predictions, dtype=np.int8)
 
     def inferences(self):
         """
