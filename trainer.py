@@ -238,27 +238,32 @@ class Trainer:
         Fits data into model to train
         """
 
-        train_images, _, _ = self._get_train_val()
-        train_ds = components.ImageDataset(train_images)
-        train_dl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+        print("\nTraining Phase\n--------------------")
 
-        model = components.AutoEncoder().to(self.device)
-        criterion = nn.MSELoss()
+        train_images, _, _ = self._get_train_val()
+        train_ds = utils.ImageDataset(train_images)
+        train_dl = DataLoader(train_ds,
+                              batch_size=BATCH_SIZE,
+                              shuffle=True,
+                              num_workers=DL_WORKERS)
+
         checkpoints = [int((i/5)*len(train_dl)) for i in range(1, 6)]
+        model = models.UNet().to(self.device)
+        criterion = utils.PXLoss(self.device)
         optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-        mse_ = []
-        ssim_ = []
-        nrmse_ = []
-        cc_ = []
+        anomaly_scores = []
         for epoch in range(N_EPOCHS):
-            print(f"EPOCH: {epoch+1}")
+            print(f"\nEPOCH: {epoch+1}")
             losses = []
-            for batch in train_dl:
+            for i, batch in enumerate(train_dl):
                 batch = batch.to(self.device)
                 reconstructs = model(batch)
-                loss = criterion(reconstructs, batch)
+                d_batch = functions.data_descale(batch, self.scaler)
+                d_reconstructs = functions.data_descale(reconstructs, self.scaler)
+                loss = criterion(d_reconstructs, d_batch)
                 losses.append(loss)
+
                 if epoch > 0:
                     anomaly_scores.append(loss.item())
                     if i in checkpoints:
@@ -278,14 +283,7 @@ class Trainer:
                 loss.backward()
                 optimizer.step()
 
-                # calculating comparing criterias
-                mse, ssim, nrmse, cc = self.compare_images(batch, reconstructs)
-                mse_.extend(mse)
-                ssim_.extend(ssim)
-                nrmse_.extend(nrmse)
-                cc_.extend(cc)
-
-                print(f"Loss: {loss}")
+                print(f"Batch {i+1} of {len(train_dl)}|Loss: {'{:.6f}'.format(loss.item())}")
 
             losses = torch.stack(losses)
             avg_loss = torch.mean(losses, dim=0)
