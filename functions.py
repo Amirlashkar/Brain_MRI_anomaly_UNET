@@ -44,3 +44,20 @@ def data_scale(data: np.ndarray, scaler:Optional[StandardScaler]=None) -> Tuple[
         return data, scaler_
     else:
         return data
+
+def data_descale(data: torch.Tensor, scaler:StandardScaler) -> torch.Tensor:
+    """
+    Converts image back to how it should be after taking scaler
+
+    data: images to convert back
+    scaler: fit scaler to use
+    """
+
+    n_samples = data.shape[0]
+    data = data.reshape(n_samples * SHAPE[0], SHAPE[-1])
+    mean = torch.tensor(scaler.mean_, dtype=torch.float32, device=data.device)
+    scale = torch.tensor(scaler.scale_, dtype=torch.float32, device=data.device)
+    data = (data * scale) + mean
+    data = data.reshape(n_samples, 1, *SHAPE)
+
+    return data
