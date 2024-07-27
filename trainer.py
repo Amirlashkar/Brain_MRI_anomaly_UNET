@@ -14,8 +14,11 @@ import os, pickle, cv2
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
+
 class Trainer:
     def __init__(self, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> None:
+        self.desc = str(input("Please write a description for your trainer:\n"))
+
         self.data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge")
         self.train_csv = self._get_train_csv()
         self.detail_dict = self.detailing(self.train_csv)
@@ -330,6 +333,7 @@ class Trainer:
 
         model = components.AutoEncoder().to(self.device)
         criterion = nn.MSELoss()
+        checkpoints = [int((i/5)*len(train_dl)) for i in range(1, 6)]
         optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
         mse_ = []
@@ -344,6 +348,21 @@ class Trainer:
                 reconstructs = model(batch)
                 loss = criterion(reconstructs, batch)
                 losses.append(loss)
+                if epoch > 0:
+                    anomaly_scores.append(loss.item())
+                    if i in checkpoints:
+                        print(f"**Checkpint {checkpoints.index(i)}")
+                        anomaly_scores_ = torch.tensor(anomaly_scores)
+                        thresholds = (torch.mean(anomaly_scores_).item(), torch.std(anomaly_scores_).item())
+
+                        ckp = utils.Checkpointer(model, self.scaler, thresholds)
+                        losses_ = torch.stack(losses)
+                        avg_loss = torch.mean(losses_, dim=0).item()
+
+                        ckp.save(epoch+1, avg_loss, self.desc)
+                        self.last_state_path = ckp.last_state_path
+                        print("State saved!")
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
