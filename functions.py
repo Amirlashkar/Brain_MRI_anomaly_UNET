@@ -108,3 +108,35 @@ def plot_org_recon(org, recon):
     plt.tight_layout()
     plt.show()
 
+def predict(
+        model:torch.nn.Module,
+        patients_image:List[torch.Tensor],
+        thresholds:Tuple,
+        criterion:torch.nn.Module,
+        scaler:StandardScaler
+    ) -> np.ndarray:
+    """
+    Provides model-driven labels (predictions)
+
+    model: a model to predict batch with
+    patients_image: list of all patients images (each patient may have different count of images)
+    thresholds: avg and std of training phase pixel-wise model loss
+    """
+
+    predictions = []
+    for i, patient in enumerate(patients_image):
+        print(f"{i+1} from {len(patients_image)}")
+        reconstructs = model(patient)
+        d_patient = data_descale(patient, scaler)
+        d_reconstructs = data_descale(reconstructs, scaler)
+        loss = criterion(d_reconstructs, d_patient).item()
+        avg, std = thresholds
+
+        if not (loss < avg + std):
+            predictions.append(1)
+        else:
+            predictions.append(0)
+
+        print(f"Loss: {loss} | Threshold: {avg + std}")
+
+    return np.array(predictions, dtype=np.int8)
