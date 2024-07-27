@@ -60,6 +60,12 @@ class Trainer:
         return normal_df, abnormal_df
 
     def _get_image_sp(self, patient_path:os.PathLike) -> Tuple:
+        """
+        Provides image shape and used protocol from patient_path
+
+        patient_path: path of patient images
+        """
+
         files = os.listdir(patient_path)
         try:
             files.remove(".DS_Store")
