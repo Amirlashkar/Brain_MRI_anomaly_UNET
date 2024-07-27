@@ -291,22 +291,24 @@ class Trainer:
             avg_loss = torch.mean(losses, dim=0)
             print(f"Avg Epoch Loss: {avg_loss}")
 
+    def _load_state(self, device:DeviceLikeType, path:Optional=None) -> Tuple:
         """
-        Loads Avg and Std on each criteria from file
+        Loads state dict from provided path or last saved state if no path provided
+
+        path: wanted state dict path
         """
 
-        thresholds_path = os.path.join(os.getcwd(), "thresholds.pkl")
-        with open(thresholds_path, "rb") as file:
-            (mse_avg, mse_std,
-            ssim_avg, ssim_std,
-            nrmse_avg, nrmse_std,
-            cc_avg, cc_std) = pickle.load(file)
+        if path:
+            state_dict = torch.load(path, map_location=device)
+        else:
+            state_dict = torch.load(self.last_state_path, map_location=device)
 
-        return (mse_avg, mse_std,
-            ssim_avg, ssim_std,
-            nrmse_avg, nrmse_std,
-            cc_avg, cc_std)
+        model_state = state_dict["model_state"]
+        scaler = state_dict["scaler"]
+        thresholds = state_dict["thresholds"]
+        description = state_dict["description"]
 
+        return model_state, scaler, thresholds, description
 
     def inferences(self):
         """
