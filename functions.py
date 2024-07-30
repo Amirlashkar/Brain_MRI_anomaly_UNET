@@ -120,6 +120,33 @@ def iterate_patient(patient_path:str) -> Generator:
         image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
         yield image_arr
 
+def resize(image:np.ndarray) -> np.ndarray:
+    """
+    Resizes image to wanted shape on constants.py file
+
+    image: image to resize
+    """
+
+    resized_image = cv2.resize(image, SHAPE, interpolation=cv2.INTER_CUBIC)
+    return resized_image
+
+def rotate(image:np.ndarray) -> np.ndarray:
+    """
+    Rotates given image
+
+    image: image to rotate
+    """
+
+    center = (SHAPE[0] // 2, SHAPE[1] // 2)
+    angle = random.randint(1, ROT_DEG)
+    flip = bool(random.randint(0, 1))
+    rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated_image = cv2.warpAffine(image, rotation_matrix, (SHAPE[0], SHAPE[1]))
+    if flip:
+        rotated_image = cv2.flip(rotated_image, 1)
+
+    return rotated_image
+
 def plot_org_recon(org, recon):
     fig, axs = plt.subplots(1, 2, figsize=(15, 5))
     axs[0].imshow(org, aspect="auto", cmap="gray")
