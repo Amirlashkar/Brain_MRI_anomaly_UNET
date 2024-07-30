@@ -4,11 +4,11 @@ from sklearn.preprocessing import StandardScaler
 from skimage import filters, morphology
 import matplotlib.pyplot as plt
 from constants import *
-import utils
 import numpy as np
+from torch.nn import functional as F
 from torch._prims_common import DeviceLikeType
 import torch
-import os
+import os, cv2, random
 
 
 data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge", "data")
@@ -76,6 +76,30 @@ def segment_brain(image:np.ndarray) -> np.ndarray:
     # brain_mask = morphology.remove_small_holes(brain_mask, area_threshold=64)
 
     return brain_mask
+
+def noise(image: torch.Tensor, noise_res:int, noise_std:float) -> torch.Tensor:
+    """
+    Adds noise to brain mask of given image
+
+    image: given image (shape=(1, 1, *SHAPE))
+    noise_res: initial noise resolution (bigger res mean bigger frequency of noise at image)
+    noise_std: noise standard deviation
+    """
+
+    ns = torch.normal(mean=torch.zeros(image.shape[0], image.shape[1], noise_res, noise_res), std=noise_std).to(image.device)
+    ns = F.upsample_bilinear(ns, size=[*SHAPE])
+
+    roll_x = random.choice(range(SHAPE[0]))
+    roll_y = random.choice(range(SHAPE[0]))
+    ns = torch.roll(ns, shifts=[roll_x, roll_y], dims=[-2, -1])
+
+    mask = segment_brain(image.cpu().detach().numpy())
+    mask = torch.tensor(mask).to(image.device)
+    ns *= mask
+
+    image = image + ns
+
+    return image.squeeze(0) # shape=(1, *SHAPE) (this is for preparing tensor for torch.stack)
 
 def iterate_patient(patient_path:str) -> Generator:
     """
