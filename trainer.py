@@ -234,6 +234,16 @@ class Trainer:
 
         return train_images, val_images, val_labels
 
+    def noise_batch(self, batch:torch.Tensor):
+        """
+        Adds noise to each element of a batch
+
+        batch: batch to add noise to it
+        """
+
+        noised = torch.stack([functions.noise(image.unsqueeze(0), NOISE_RES, NOISE_STD) for image in batch]) # adding noise to raw image
+        return noised
+
     def fit(self) -> None:
         """
         Fits data into model to train
@@ -260,8 +270,10 @@ class Trainer:
             losses = []
             for i, batch in enumerate(train_dl):
                 batch = batch.to(self.device)
-                reconstructs = model(batch)
-                d_batch = functions.data_descale(batch, self.scaler)
+                noised = self.noise_batch(batch)
+                reconstructs = model(noised)
+
+                d_batch = functions.data_descale(batch, self.scaler) # descaling image to fit it into loss function
                 d_reconstructs = functions.data_descale(reconstructs, self.scaler)
                 loss = criterion(d_reconstructs, d_batch)
                 losses.append(loss)
