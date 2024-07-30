@@ -22,7 +22,7 @@ class Trainer:
         self.data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge")
         self.train_csv = self._get_train_csv()
         self.detail_dict = self.detailing(self.train_csv)
-        self.train_csv = self.filter_data(self.train_csv, chosen_shapes, chosen_protocols)
+        self.train_csv = self.filter_data(self.train_csv, chosen_protocol)
         self.normal_df, self.abnormal_df = self.separate_df(self.train_csv)
 
         self.scaler:Optional[StandardScaler] = None
@@ -117,7 +117,7 @@ class Trainer:
 
         return detail_dict
 
-    def filter_data(self, data:pd.DataFrame, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> pd.DataFrame:
+    def filter_data(self, data:pd.DataFrame, chosen_protocol:str) -> pd.DataFrame:
         """
         Filters patients id df by detail_dict and with respect to chosen parameters
 
@@ -128,13 +128,13 @@ class Trainer:
 
         chosens = []
         for patient_id, dict_ in self.detail_dict.items():
-            shape = dict_["shape"]
             protocol = dict_["protocol"]
-            if shape in chosen_shapes and protocol in chosen_protocols:
+            if protocol == chosen_protocol:
                 chosens.append(patient_id)
 
         data_ = data.copy()
         data_ = data_[data_["SeriesInstanceUID"].isin(chosens)]
+
         return data_
 
     def add_padding(self, image: np.ndarray, target_size=(288, 288)) -> np.ndarray:
