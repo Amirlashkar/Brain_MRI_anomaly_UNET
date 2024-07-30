@@ -311,9 +311,9 @@ class Trainer:
         """
 
         if path:
-            state_dict = torch.load(path, map_location=device)
+            state_dict = torch.load(path, map_location=device, weights_only=False)
         else:
-            state_dict = torch.load(self.last_state_path, map_location=device)
+            state_dict = torch.load(self.last_state_path, map_location=device, weights_only=False)
 
         model_state = state_dict["model_state"]
         scaler = state_dict["scaler"]
