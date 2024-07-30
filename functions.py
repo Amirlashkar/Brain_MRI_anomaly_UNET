@@ -117,7 +117,6 @@ def iterate_patient(patient_path:str) -> Generator:
     for image in images:
         image_path = os.path.join(patient_path, image)
         image_arr = read_dc(image_path).pixel_array
-        image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
         yield image_arr
 
 def resize(image:np.ndarray) -> np.ndarray:
@@ -180,6 +179,9 @@ def predict(
         reconstructs = model(patient)
         d_patient = data_descale(patient, scaler)
         d_reconstructs = data_descale(reconstructs, scaler)
+        # raw = d_patient.cpu().detach().numpy()[0][0]
+        # recon = d_reconstructs.cpu().detach().numpy()[0][0]
+        # plot_org_recon(raw, recon)
         loss = criterion(d_reconstructs, d_patient).item()
         avg, std = thresholds
 
