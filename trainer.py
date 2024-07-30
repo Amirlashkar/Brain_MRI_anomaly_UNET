@@ -16,7 +16,7 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
 class Trainer:
-    def __init__(self, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> None:
+    def __init__(self, chosen_protocol:str, high_ram:bool) -> None:
         self.desc = str(input("Please write a description for your trainer:\n"))
 
         self.data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge")
@@ -25,8 +25,6 @@ class Trainer:
         self.train_csv = self.filter_data(self.train_csv, chosen_shapes, chosen_protocols)
         self.normal_df, self.abnormal_df = self.separate_df(self.train_csv)
 
-        self.train:Optional[np.ndarray] = None
-        self.val:Optional[np.ndarray] = None
         self.scaler:Optional[StandardScaler] = None
         self.last_state_path:Optional[str] = None
 
@@ -38,6 +36,9 @@ class Trainer:
             os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
         else:
             self.device = torch.device("cpu")
+
+        if high_ram:
+            self.train, self.val, self.val_labels = self._get_train_val()
 
     def _get_train_csv(self) -> pd.DataFrame:
         """
@@ -240,12 +241,13 @@ class Trainer:
 
         print("\nTraining Phase\n--------------------")
 
-        train_images, _, _ = self._get_train_val()
-        train_ds = utils.ImageDataset(train_images)
-        train_dl = DataLoader(train_ds,
-                              batch_size=BATCH_SIZE,
-                              shuffle=True,
-                              num_workers=DL_WORKERS)
+        train_ds = utils.ImageDataset(self.train)
+        train_dl = DataLoader(
+            train_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            num_workers=DL_WORKERS
+        )
 
         checkpoints = [int((i/5)*len(train_dl)) for i in range(1, 6)]
         model = models.UNet().to(self.device)
@@ -318,11 +320,9 @@ class Trainer:
         model = models.UNet().to(self.device)
         model.load_state_dict(model_state)
 
-        _, val_images, val_labels = self._get_train_val()
-
         criterion = utils.PXLoss(self.device)
-        predictions = functions.predict(model, val_images, thresholds, criterion, scaler)
-        c_matrix = confusion_matrix(val_labels, predictions)
+        predictions = functions.predict(model, self.val, thresholds, criterion, scaler)
+        c_matrix = confusion_matrix(self.val_labels, predictions)
         disp = ConfusionMatrixDisplay(confusion_matrix=c_matrix, display_labels=[0, 1])
         disp.plot(cmap=plt.cm.Blues)
 
@@ -335,17 +335,14 @@ class Trainer:
         plt.savefig(cm_path)
 
 if __name__ == "__main__":
-    shapes = [
-        (288, 288),
-        # (256, 256),
-    ]
     protocols = [
         "T1W_SE",
         # "T2W_FLAIR",
         # "T2W_TSE"
     ]
+    chosen_p = "T1W_SE"
 
-    trainer = Trainer(shapes, protocols)
+    trainer = Trainer(chosen_p, True)
     print(f"Normal samples: {trainer.normal_df.shape[0]} | Abnormal samples: {trainer.abnormal_df.shape[0]}")
     trainer.fit()
     trainer.inferences()
