@@ -259,7 +259,7 @@ class Trainer:
             num_workers=DL_WORKERS
         )
 
-        checkpoints = [int((i/5)*len(train_dl)) for i in range(1, 6)]
+        checkpoints = [int((i/5)*(len(train_dl)-1)) for i in range(1, 6)]
         model = models.UNet().to(self.device)
         criterion = utils.PXLoss(self.device)
         optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -281,7 +281,7 @@ class Trainer:
                 if epoch > 0:
                     anomaly_scores.append(loss.item())
                     if i in checkpoints:
-                        print(f"**Checkpint {checkpoints.index(i)}")
+                        print(f"----\n**Checkpint {checkpoints.index(i)+1}")
                         anomaly_scores_ = torch.tensor(anomaly_scores)
                         thresholds = (torch.mean(anomaly_scores_).item(), torch.std(anomaly_scores_).item())
 
@@ -291,7 +291,7 @@ class Trainer:
 
                         ckp.save(epoch+1, avg_loss, self.desc)
                         self.last_state_path = ckp.last_state_path
-                        print("State saved!")
+                        print("State saved!\n----")
 
                 optimizer.zero_grad()
                 loss.backward()
