@@ -4,11 +4,11 @@ from sklearn.preprocessing import StandardScaler
 from skimage import filters, morphology
 import matplotlib.pyplot as plt
 from constants import *
-import utils
 import numpy as np
+from torch.nn import functional as F
 from torch._prims_common import DeviceLikeType
 import torch
-import os
+import os, cv2, random
 
 
 data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge", "data")
@@ -77,6 +77,30 @@ def segment_brain(image:np.ndarray) -> np.ndarray:
 
     return brain_mask
 
+def noise(image: torch.Tensor, noise_res:int, noise_std:float) -> torch.Tensor:
+    """
+    Adds noise to brain mask of given image
+
+    image: given image (shape=(1, 1, *SHAPE))
+    noise_res: initial noise resolution (bigger res mean bigger frequency of noise at image)
+    noise_std: noise standard deviation
+    """
+
+    ns = torch.normal(mean=torch.zeros(image.shape[0], image.shape[1], noise_res, noise_res), std=noise_std).to(image.device)
+    ns = F.upsample_bilinear(ns, size=[*SHAPE])
+
+    roll_x = random.choice(range(SHAPE[0]))
+    roll_y = random.choice(range(SHAPE[0]))
+    ns = torch.roll(ns, shifts=[roll_x, roll_y], dims=[-2, -1])
+
+    mask = segment_brain(image.cpu().detach().numpy())
+    mask = torch.tensor(mask).to(image.device)
+    ns *= mask
+
+    image = image + ns
+
+    return image.squeeze(0) # shape=(1, *SHAPE) (this is for preparing tensor for torch.stack)
+
 def iterate_patient(patient_path:str) -> Generator:
     """
     Provides image arrays with respect to provided patient path
@@ -93,8 +117,34 @@ def iterate_patient(patient_path:str) -> Generator:
     for image in images:
         image_path = os.path.join(patient_path, image)
         image_arr = read_dc(image_path).pixel_array
-        image_arr = np.expand_dims(image_arr, axis=0) # adding single channel to each image
         yield image_arr
+
+def resize(image:np.ndarray) -> np.ndarray:
+    """
+    Resizes image to wanted shape on constants.py file
+
+    image: image to resize
+    """
+
+    resized_image = cv2.resize(image, SHAPE, interpolation=cv2.INTER_CUBIC)
+    return resized_image
+
+def rotate(image:np.ndarray) -> np.ndarray:
+    """
+    Rotates given image
+
+    image: image to rotate
+    """
+
+    center = (SHAPE[0] // 2, SHAPE[1] // 2)
+    angle = random.randint(1, ROT_DEG)
+    flip = bool(random.randint(0, 1))
+    rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated_image = cv2.warpAffine(image, rotation_matrix, (SHAPE[0], SHAPE[1]))
+    if flip:
+        rotated_image = cv2.flip(rotated_image, 1)
+
+    return rotated_image
 
 def plot_org_recon(org, recon):
     fig, axs = plt.subplots(1, 2, figsize=(15, 5))
@@ -129,6 +179,9 @@ def predict(
         reconstructs = model(patient)
         d_patient = data_descale(patient, scaler)
         d_reconstructs = data_descale(reconstructs, scaler)
+        # raw = d_patient.cpu().detach().numpy()[0][0]
+        # recon = d_reconstructs.cpu().detach().numpy()[0][0]
+        # plot_org_recon(raw, recon)
         loss = criterion(d_reconstructs, d_patient).item()
         avg, std = thresholds
 

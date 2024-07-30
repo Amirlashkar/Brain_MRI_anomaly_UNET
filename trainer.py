@@ -16,17 +16,15 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
 class Trainer:
-    def __init__(self, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> None:
+    def __init__(self, chosen_protocol:str, high_ram:bool) -> None:
         self.desc = str(input("Please write a description for your trainer:\n"))
 
         self.data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge")
         self.train_csv = self._get_train_csv()
         self.detail_dict = self.detailing(self.train_csv)
-        self.train_csv = self.filter_data(self.train_csv, chosen_shapes, chosen_protocols)
+        self.train_csv = self.filter_data(self.train_csv, chosen_protocol)
         self.normal_df, self.abnormal_df = self.separate_df(self.train_csv)
 
-        self.train:Optional[np.ndarray] = None
-        self.val:Optional[np.ndarray] = None
         self.scaler:Optional[StandardScaler] = None
         self.last_state_path:Optional[str] = None
 
@@ -38,6 +36,9 @@ class Trainer:
             os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
         else:
             self.device = torch.device("cpu")
+
+        if high_ram:
+            self.train, self.val, self.val_labels = self._get_train_val()
 
     def _get_train_csv(self) -> pd.DataFrame:
         """
@@ -116,7 +117,7 @@ class Trainer:
 
         return detail_dict
 
-    def filter_data(self, data:pd.DataFrame, chosen_shapes:List[Tuple], chosen_protocols:List[str]) -> pd.DataFrame:
+    def filter_data(self, data:pd.DataFrame, chosen_protocol:str) -> pd.DataFrame:
         """
         Filters patients id df by detail_dict and with respect to chosen parameters
 
@@ -127,13 +128,13 @@ class Trainer:
 
         chosens = []
         for patient_id, dict_ in self.detail_dict.items():
-            shape = dict_["shape"]
             protocol = dict_["protocol"]
-            if shape in chosen_shapes and protocol in chosen_protocols:
+            if protocol == chosen_protocol:
                 chosens.append(patient_id)
 
         data_ = data.copy()
         data_ = data_[data_["SeriesInstanceUID"].isin(chosens)]
+
         return data_
 
     def add_padding(self, image: np.ndarray, target_size=(288, 288)) -> np.ndarray:
@@ -208,8 +209,11 @@ class Trainer:
         for i, patient in enumerate(train_patients["SeriesInstanceUID"]):
             if i < val_patients.shape[0]:
                 val_patient_path = os.path.join(self.data_path, "data", val_patients.iloc[i]["SeriesInstanceUID"])
+
                 patient_images = []
                 for image in functions.iterate_patient(val_patient_path):
+                    image = functions.resize(image)
+                    image = functions.rotate(image)
                     patient_images.append(image)
 
                 patient_images = np.array(patient_images, dtype=np.float32)
@@ -217,14 +221,13 @@ class Trainer:
 
             patient_path = os.path.join(self.data_path, "data", patient)
             for image in functions.iterate_patient(patient_path):
-                train_images.append(image)
+                image = functions.resize(image)
+                rot_image = functions.rotate(image)
+                train_images.extend([image, rot_image])
 
         train_images = np.array(train_images, dtype=np.float32)
-
         train_images, self.scaler = functions.data_scale(train_images)
-        val_images = [
-            functions.data_scale(arr, self.scaler) for arr in val_images
-        ]
+        val_images = [functions.data_scale(arr, self.scaler) for arr in val_images]
 
         train_images = torch.tensor(train_images, dtype=torch.float32)
         # val_images = val_images[200:212]
@@ -233,6 +236,16 @@ class Trainer:
 
         return train_images, val_images, val_labels
 
+    def noise_batch(self, batch:torch.Tensor):
+        """
+        Adds noise to each element of a batch
+
+        batch: batch to add noise to it
+        """
+
+        noised = torch.stack([functions.noise(image.unsqueeze(0), NOISE_RES, NOISE_STD) for image in batch]) # adding noise to raw image
+        return noised
+
     def fit(self) -> None:
         """
         Fits data into model to train
@@ -240,14 +253,15 @@ class Trainer:
 
         print("\nTraining Phase\n--------------------")
 
-        train_images, _, _ = self._get_train_val()
-        train_ds = utils.ImageDataset(train_images)
-        train_dl = DataLoader(train_ds,
-                              batch_size=BATCH_SIZE,
-                              shuffle=True,
-                              num_workers=DL_WORKERS)
+        train_ds = utils.ImageDataset(self.train)
+        train_dl = DataLoader(
+            train_ds,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            num_workers=DL_WORKERS
+        )
 
-        checkpoints = [int((i/5)*len(train_dl)) for i in range(1, 6)]
+        checkpoints = [int((i/5)*(len(train_dl)-1)) for i in range(1, 6)]
         model = models.UNet().to(self.device)
         criterion = utils.PXLoss(self.device)
         optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -258,8 +272,10 @@ class Trainer:
             losses = []
             for i, batch in enumerate(train_dl):
                 batch = batch.to(self.device)
-                reconstructs = model(batch)
-                d_batch = functions.data_descale(batch, self.scaler)
+                noised = self.noise_batch(batch)
+                reconstructs = model(noised)
+
+                d_batch = functions.data_descale(batch, self.scaler) # descaling image to fit it into loss function
                 d_reconstructs = functions.data_descale(reconstructs, self.scaler)
                 loss = criterion(d_reconstructs, d_batch)
                 losses.append(loss)
@@ -267,7 +283,7 @@ class Trainer:
                 if epoch > 0:
                     anomaly_scores.append(loss.item())
                     if i in checkpoints:
-                        print(f"**Checkpint {checkpoints.index(i)}")
+                        print(f"----\n**Checkpint {checkpoints.index(i)+1}")
                         anomaly_scores_ = torch.tensor(anomaly_scores)
                         thresholds = (torch.mean(anomaly_scores_).item(), torch.std(anomaly_scores_).item())
 
@@ -277,7 +293,7 @@ class Trainer:
 
                         ckp.save(epoch+1, avg_loss, self.desc)
                         self.last_state_path = ckp.last_state_path
-                        print("State saved!")
+                        print("State saved!\n----")
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -297,9 +313,9 @@ class Trainer:
         """
 
         if path:
-            state_dict = torch.load(path, map_location=device)
+            state_dict = torch.load(path, map_location=device, weights_only=False)
         else:
-            state_dict = torch.load(self.last_state_path, map_location=device)
+            state_dict = torch.load(self.last_state_path, map_location=device, weights_only=False)
 
         model_state = state_dict["model_state"]
         scaler = state_dict["scaler"]
@@ -318,11 +334,9 @@ class Trainer:
         model = models.UNet().to(self.device)
         model.load_state_dict(model_state)
 
-        _, val_images, val_labels = self._get_train_val()
-
         criterion = utils.PXLoss(self.device)
-        predictions = functions.predict(model, val_images, thresholds, criterion, scaler)
-        c_matrix = confusion_matrix(val_labels, predictions)
+        predictions = functions.predict(model, self.val, thresholds, criterion, scaler)
+        c_matrix = confusion_matrix(self.val_labels, predictions)
         disp = ConfusionMatrixDisplay(confusion_matrix=c_matrix, display_labels=[0, 1])
         disp.plot(cmap=plt.cm.Blues)
 
@@ -335,17 +349,14 @@ class Trainer:
         plt.savefig(cm_path)
 
 if __name__ == "__main__":
-    shapes = [
-        (288, 288),
-        # (256, 256),
-    ]
     protocols = [
         "T1W_SE",
         # "T2W_FLAIR",
         # "T2W_TSE"
     ]
+    chosen_p = "T1W_SE"
 
-    trainer = Trainer(shapes, protocols)
+    trainer = Trainer(chosen_p, True)
     print(f"Normal samples: {trainer.normal_df.shape[0]} | Abnormal samples: {trainer.abnormal_df.shape[0]}")
     trainer.fit()
     trainer.inferences()
