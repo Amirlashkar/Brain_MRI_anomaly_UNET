@@ -318,6 +318,21 @@ def plot_org_recon(org, recon, mask, residual, high_coor):
     plt.show()
     plt.close(fig)
 
+def median_pool(x, kernel_size=3, stride=1, padding=0):
+    """
+    This function makes high value areas more visible and suppresses other areas on residual
+    """
+
+    k = _pair(kernel_size)
+    stride = _pair(stride)
+    padding = _quadruple(padding)
+
+    x = F.pad(x, padding, mode='reflect')
+    x = x.unfold(2, k[0], stride[0]).unfold(3, k[1], stride[1])
+    x = x.contiguous().view(x.size()[:4] + (-1,)).median(dim=-1)[0]
+
+    return x
+
 
 def predict(
         model:torch.nn.Module,
