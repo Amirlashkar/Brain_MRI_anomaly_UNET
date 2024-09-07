@@ -288,17 +288,36 @@ def rotate(image:np.ndarray) -> np.ndarray:
 
     return rotated_image
 
-def plot_org_recon(org, recon):
-    fig, axs = plt.subplots(1, 2, figsize=(15, 5))
+def plot_org_recon(org, recon, mask, residual, high_coor):
+    """
+    Plotting some images to have better vision on model preferences
+
+    org: orginal image
+    recon: model reconstructs
+    mask: mask which making function made
+    high_coor: high patch coordination which is considered as anomalous patch
+    """
+
+    fig, axs = plt.subplots(1, 4, figsize=(15, 5))
     axs[0].imshow(org, aspect="auto", cmap="gray")
     axs[0].axis('off')
     axs[0].set_title("Original")
     axs[1].imshow(recon, aspect="auto", cmap="gray")
     axs[1].axis('off')
     axs[1].set_title("Recon")
+    axs[2].imshow(mask, aspect="auto", cmap="gray")
+    axs[2].axis('off')
+    axs[2].set_title("Mask")
+    axs[3].imshow(residual, aspect="auto")
+    axs[3].axis('off')
+    axs[3].set_title("Residual")
+    rect = ptc.Rectangle(high_coor, PATCH_DIM, PATCH_DIM, linewidth=1, edgecolor='r', facecolor='none')
+    axs[3].add_patch(rect)
 
     plt.tight_layout()
     plt.show()
+    plt.close(fig)
+
 
 def predict(
         model:torch.nn.Module,
