@@ -142,6 +142,7 @@ def cropping(image:np.ndarray) -> np.ndarray:
     """
     Create a mask to only conclude most valuable regions of brain
 
+    image: image or batch of images to create mask from it
     """
 
     thres = otsu(image)
@@ -202,19 +203,23 @@ def noise(image: torch.Tensor, noise_res:int, noise_std:float) -> torch.Tensor:
     roll_y = random.choice(range(SHAPE[0]))
     ns = torch.roll(ns, shifts=[roll_x, roll_y], dims=[-2, -1])
 
-    mask = segment_brain(image.cpu().detach().numpy())
+    mimg = image.squeeze(0).squeeze(0).cpu().detach().numpy()
+    mask = masking(mimg)
     mask = torch.tensor(mask).to(image.device)
-    ns *= mask
+    ns *= mask.unsqueeze(0).unsqueeze(0)
 
     image = image + ns
 
     return image.squeeze(0) # shape=(1, *SHAPE) (this is for preparing tensor for torch.stack)
 
 def iterate_patient(patient_path:str) -> Generator:
+def noise_batch(batch:torch.Tensor):
     """
     Provides image arrays with respect to provided patient path
+    Adds noise to each element of a batch
 
     patient_path: path of images
+    batch: batch to add noise to it
     """
 
     images = os.listdir(patient_path)
@@ -227,6 +232,8 @@ def iterate_patient(patient_path:str) -> Generator:
         image_path = os.path.join(patient_path, image)
         image_arr = read_dc(image_path).pixel_array
         yield image_arr
+    noised = torch.stack([noise(image.unsqueeze(0), NOISE_RES, NOISE_STD) for image in batch]) # adding noise to raw image
+    return noised.to(batch.device)
 
 def resize(image:np.ndarray) -> np.ndarray:
     """
