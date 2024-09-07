@@ -1,10 +1,10 @@
 from typing import Tuple
-from sklearn.preprocessing import StandardScaler
+from constants import *
 from datetime import datetime
-import pickle as pkl
 import functions
 from torch.utils.data import Dataset
 from torch._prims_common import DeviceLikeType
+from torchmetrics.image import StructuralSimilarityIndexMeasure
 import torch.nn as nn
 import torch
 import os
@@ -15,7 +15,7 @@ class ImageDataset(Dataset):
     Making data accessible
     """
 
-    def __init__(self, data):
+    def __init__(self, data:torch.Tensor):
         self.data = data
 
     def __len__(self):
@@ -33,33 +33,67 @@ class PXLoss(nn.Module):
         self.device = device
 
     def forward(self, predictions, targets):
+        # Mask
         targets = targets.cpu().detach().numpy()
-        mask = torch.tensor(functions.segment_brain(targets)).to(self.device)
-        targets = torch.tensor(targets).to(self.device)
+        masks = [torch.tensor(functions.masking(t.squeeze(0))).to(self.device) for t in targets]
+        masks = torch.stack(masks).unsqueeze(1)
+
+        # Main part to compare two batches
+        metric = StructuralSimilarityIndexMeasure(data_range=1.).to(self.device)
+        targets = torch.tensor(targets, dtype=torch.float32).to(self.device)
+
+
+        # This loop is used not to let spots with high loss happen on reconstruction
+        losses = []
+        for ind, target in enumerate(targets):
+            t_ = target.squeeze(0)
+            p_ = predictions[ind][0].squeeze(0)
+
+            for i in range(0, SHAPE[0], SHAPE[0]):
+                for j in range(0, SHAPE[0], SHAPE[0]):
+                    t_patch = t_[i:i+PATCH_DIM, j:j+PATCH_DIM]
+                    p_patch = p_[i:i+PATCH_DIM, j:j+PATCH_DIM]
+
+                    ssim = metric(p_patch.unsqueeze(0).unsqueeze(0), t_patch.unsqueeze(0).unsqueeze(0))
+                    ssim = 1 - ssim
+                    diff = torch.abs(p_patch - t_patch)
+                    diff = torch.mean(diff)
+
+                    if not torch.isnan(ssim):
+                        loss = SSIM_ALPHA * ssim + (1 - SSIM_ALPHA) * diff
+                        losses.append(loss)
+
+        patch_loss = torch.mean(torch.stack(losses))
+
+        ssim = metric(predictions, targets)
+        ssim = 1 - ssim
         diff = torch.abs(predictions - targets)
-        loss = torch.mean(torch.pow(diff, 2) * mask)
+        diff = torch.mean(diff)
+        # packing up all factors together
+        loss = SSIM_ALPHA * ssim + ((1 - SSIM_ALPHA) * .75) * diff +  ((1 - SSIM_ALPHA) * .25) * patch_loss
 
         return loss
-
 
 class Checkpointer:
     def __init__(
         self,
         model:torch.nn.Module,
-        scaler:StandardScaler,
         thresholds:Tuple[float, float]
         ) -> None:
 
         self.model = model
-        self.scaler = scaler
         self.thresholds = thresholds
 
-        self.checkpoint_path = os.path.join(os.getcwd(), "checkpoints")
+        self.checkpoint_path = os.path.join(os.getcwd(), "ckpt")
         self.check_folder()
 
         self.last_state_path = None
 
     def check_folder(self):
+        """
+        Creating ckpt folder if doesn't exists
+        """
+
         if not os.path.exists(self.checkpoint_path):
             os.makedirs(self.checkpoint_path)
 
@@ -82,7 +116,6 @@ class Checkpointer:
         state_dict = {
             "model_arch": str(self.model),
             "model_state": self.model.state_dict(),
-            "scaler": self.scaler,
             "thresholds": self.thresholds,
             "description": desc,
         }
