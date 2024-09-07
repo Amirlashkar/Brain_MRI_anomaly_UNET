@@ -1,18 +1,15 @@
-from collections.abc import Generator
 from constants import *
 import functions, utils, models
-from typing import List, Optional, Tuple
-from torch._prims_common import DeviceLikeType
+from typing import Optional, Tuple
 from torch.utils.data import DataLoader
 import torch.optim as optim
-import torch.nn as nn
 import torch
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import os, pickle, cv2
-from sklearn.preprocessing import StandardScaler
+import os
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from time import time
 
 
 class Trainer:
