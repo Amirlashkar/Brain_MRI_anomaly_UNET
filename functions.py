@@ -333,6 +333,135 @@ def median_pool(x, kernel_size=3, stride=1, padding=0):
 
     return x
 
+def _patching(residual:torch.Tensor) -> Tuple[list, list]:
+    """
+    Creates patches out of an image.
+
+    residual: SSIM map
+    """
+
+    residual = residual.squeeze(0).squeeze(0).cpu().detach().numpy()
+
+    patches = []
+    coors = []
+    for i in range(0, SHAPE[0], PATCH_SKIP):
+        for j in range(0, SHAPE[0], PATCH_SKIP):
+            patch = residual[i:i+PATCH_DIM, j:j+PATCH_DIM]
+            patches.append(patch)
+            coors.append((j, i))
+
+    return patches, coors
+
+def high_patch_criterion(arr:np.ndarray) -> float:
+    """
+    Calculates a criteria that image patches should be sorted by it on _high_patch func.
+
+    arr: array of patch
+    """
+
+    arr = np.nan_to_num(arr, nan=0)
+    threshold = np.percentile(arr, 80)
+    top_quarter = arr[arr >= threshold]
+    mean = np.mean(top_quarter).item()
+
+    if np.isnan(mean):
+        return 0
+    else:
+        return mean
+
+def top_part_mean(arr:np.ndarray) -> float:
+    """
+    Gets mean of outlier data within a patch or a sample array.
+
+    arr: input array to get outlier mean of it
+    """
+
+    arr = np.nan_to_num(arr, nan=0)
+    threshold = np.mean(arr) + np.std(arr)
+    top_quarter = arr[arr >= threshold]
+    mean = np.mean(top_quarter).item()
+
+    if np.isnan(mean):
+        return 0
+    else:
+        return mean
+
+def _high_patch(patches, coors):
+    """
+    Hunts down the most anomalous patch within an image.
+
+    patches: all patches of that image
+    coors: coordination of patches ; same as patches ordination
+    """
+
+    patches_mean = np.array([high_patch_criterion(patch.flatten()) for patch in patches])
+    high_mean = np.sort(patches_mean)[-1]
+    ind = patches_mean.tolist().index(high_mean)
+    high_patch = patches[ind]
+    chosen_coor = coors[ind]
+    return high_patch, chosen_coor
+
+def batch_ssim(predictions, targets):
+    """
+    Calculates SSIM map of predictions and input of model ;
+    This map tells us where exactly two images are different from eachother.
+
+    predictions: batch of model predictions out of model input batch; SHAPE:(n, 1, 256, 256)
+    targets: batch of model input; SHAPE:(n, 1, 256, 256)
+    """
+
+    diff = []
+    for i, img in enumerate(predictions):
+        p_img = img[0].cpu().detach().numpy()
+        t_img = targets[i][0].cpu().detach().numpy()
+        mask = masking(t_img)
+
+        p_img = (p_img - p_img.min()) / (p_img.max() - p_img.min()) * 255
+        p_img = p_img.astype(np.uint8)
+        t_img = (t_img - t_img.min()) / (t_img.max() - t_img.min()) * 255
+        t_img = t_img.astype(np.uint8)
+
+        _, ssim_img = ssim(t_img, p_img, full=True, data_range=1.)
+        ssim_img = 1 - ssim_img # we want differences
+        ssim_img *= mask
+        ssim_img += 1
+        ssim_img = torch.tensor(ssim_img, dtype=torch.float32)
+        diff.append(ssim_img)
+
+    diff = torch.stack(diff).unsqueeze(1)
+
+    return diff
+
+def anomaly_scoring(predictions, targets) -> Tuple:
+    """
+    Compares two batch of images and give them an score of how much the targets batch
+    is anomalous.
+
+    predictions: batch of model predictions out of model input batch; SHAPE:(n, 1, 256, 256)
+    targets: batch of model input; SHAPE:(n, 1, 256, 256)
+    """
+
+    ssim = batch_ssim(predictions, targets)
+
+    # suppressing low values
+    residual = torch.pow(ssim, 2).to(targets.device)
+    residual = median_pool(residual, kernel_size=5, stride=1, padding=2)
+
+    residual = residual.squeeze(1)
+    high_p_scores = []
+    for r in residual:
+        ps, cs = _patching(r)
+        high_p, _ = _high_patch(ps, cs)
+        patch_var = np.var(high_p.flatten())
+        top_mean = top_part_mean(high_p.flatten())
+        score = top_mean + patch_var
+        high_p_scores.append(score)
+
+    high_p_scores = np.sort(np.array(high_p_scores))[-2:]
+    anomaly_score = np.mean(high_p_scores).item()
+
+    return anomaly_score, residual
+
 
 def predict(
         model:torch.nn.Module,
