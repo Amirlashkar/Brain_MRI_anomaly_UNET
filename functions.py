@@ -526,3 +526,37 @@ def predict(
 
     return np.array(predictions)
 
+def print_pr_auc(true_negative, false_positive, false_negative, true_positive):
+    """
+    Logging ROC AUC and PR AUC as final inferences
+    """
+
+    tn = np.zeros(true_negative).tolist()
+    tp = np.ones(true_positive).tolist()
+    tn.extend(tp)
+
+    pred = tn.copy()
+    label = tn.copy()
+
+    fp = np.ones(false_positive)
+    pred.extend(fp)
+    fp_ = np.zeros(false_positive)
+    label.extend(fp_)
+
+    fn = np.zeros(false_negative)
+    pred.extend(fn)
+    fn_ = np.ones(false_negative)
+    label.extend(fn_)
+
+    pred = np.array(pred)
+    label = np.array(label)
+
+
+    fpr, tpr, threshold_roc = roc_curve(label, pred)
+    roc_auc = auc(fpr, tpr)
+
+    precision, recall, thresholds_pr = precision_recall_curve(label, pred)
+    pr_auc = auc(recall, precision)
+
+    print(f"\nROC AUC: {roc_auc}")
+    print(f"PR AUC: {pr_auc}")
