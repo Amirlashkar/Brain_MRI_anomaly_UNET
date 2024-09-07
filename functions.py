@@ -12,7 +12,6 @@ from torch.nn.modules.utils import _pair, _quadruple
 import torch
 import os, cv2, random
 
-
 data_path = os.path.join(os.getcwd(), "data", "main", "iaaa-mri-challenge", "data")
 
 def read_dc(path:str) -> FileDataset:
@@ -26,7 +25,6 @@ def read_dc(path:str) -> FileDataset:
 
     return ds
 
-def data_scale(data: np.ndarray, scaler:Optional[StandardScaler]=None) -> Tuple[np.ndarray, StandardScaler] | np.ndarray:
 def crop(vol, mins, maxs):
     """Crops the input volume.
 
@@ -102,8 +100,6 @@ def applymask(vol, mask):
     mask = mask.reshape(mask.shape + (vol.ndim - mask.ndim) * (1,))
     return vol * mask
 
-    data: training data
-    scaler: pre-made scaler
 def otsu(image, nbins=256):
     """
     Return threshold value based on Otsu's method.
@@ -117,8 +113,6 @@ def otsu(image, nbins=256):
         Number of bins used to calculate histogram. This value is ignored for
         integer arrays.
 
-    if not scaler:
-        scaler_ = StandardScaler()
     Returns
     -------
     threshold : float
@@ -131,43 +125,25 @@ def otsu(image, nbins=256):
     weight1 = np.cumsum(hist)
     weight2 = np.cumsum(hist[::-1])[::-1]
 
-    n_samples = data.shape[0]
-    data = data.reshape(n_samples * SHAPE[0], SHAPE[-1]) # preparing shape for scaler
-    data = scaler_.fit_transform(data) if not scaler else scaler.transform(data)
-    data = data.reshape(n_samples, 1, *SHAPE) # returning shape back to initial
     # class means for all possible thresholds
     mean1 = np.cumsum(hist * bin_centers[1:]) / weight1
     mean2 = (np.cumsum((hist * bin_centers[1:])[::-1]) / weight2[::-1])[::-1]
 
-    if not scaler:
-        return data, scaler_
-    else:
-        return data
     # Clip ends to align class 1 and class 2 variables:
     # The last value of `weight1`/`mean1` should pair with zero values in
     # `weight2`/`mean2`, which do not exist.
     variance12 = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:])**2
 
-def data_descale(data: torch.Tensor, scaler:StandardScaler) -> torch.Tensor:
     idx = np.argmax(variance12)
     threshold = bin_centers[:-1][idx]
     return threshold
 
 def cropping(image:np.ndarray) -> np.ndarray:
     """
-    Converts image back to how it should be after taking scaler
     Create a mask to only conclude most valuable regions of brain
 
-    data: images to convert back
-    scaler: fit scaler to use
     """
 
-    n_samples = data.shape[0]
-    data = data.reshape(n_samples * SHAPE[0], SHAPE[-1])
-    mean = torch.tensor(scaler.mean_, dtype=torch.float32, device=data.device)
-    scale = torch.tensor(scaler.scale_, dtype=torch.float32, device=data.device)
-    data = (data * scale) + mean
-    data = data.reshape(n_samples, 1, *SHAPE)
     thres = otsu(image)
     mask = image > thres
     mask = morphology.remove_small_holes(mask, area_threshold=20000)
@@ -178,7 +154,6 @@ def cropping(image:np.ndarray) -> np.ndarray:
     masked_image = applymask(image, mask)
     masked_image = resize(masked_image)
 
-    return data
     return masked_image
 
 def segment_brain(image:np.ndarray) -> np.ndarray:
