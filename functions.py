@@ -156,20 +156,35 @@ def cropping(image:np.ndarray) -> np.ndarray:
 
     return masked_image
 
-def segment_brain(image:np.ndarray) -> np.ndarray:
+def img_smoothing(image):
     """
-    Create a mask to only conclude most valuable regions of brain
+    This function is used on masking to make mask edges clearer
 
-    image: image or batch of images to create mask from it
+    image: grayscale image of brain
     """
 
-    threshold_value = filters.threshold_otsu(image)
-    brain_mask = image > threshold_value
+    image = (image - image.min()) / (image.max() - image.min()) * 255
+    image = image.astype(np.uint8)
+    smoothed = cv2.GaussianBlur(image, (7, 7), 0)
+    smoothed = smoothed.astype(np.float32)
+    return smoothed
 
-    # brain_mask = morphology.remove_small_objects(brain_mask, min_size=64)
-    # brain_mask = morphology.remove_small_holes(brain_mask, area_threshold=64)
+def masking(image:np.ndarray):
+    """
+    Making mask which only includes brain areas
 
-    return brain_mask
+    image: brain grayscale image
+    """
+
+    image = img_smoothing(image)
+    image = image.astype(np.float32)
+    image = (image - image.min()) / (image.max() - image.min())
+    mask = image > .01
+    mask = morphology.remove_small_holes(mask, area_threshold=500)
+    mask = morphology.remove_small_objects(mask, min_size=500)
+    mask = mask.astype(np.int8)
+
+    return mask
 
 def noise(image: torch.Tensor, noise_res:int, noise_std:float) -> torch.Tensor:
     """
