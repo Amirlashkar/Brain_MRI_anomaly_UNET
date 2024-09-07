@@ -25,29 +25,136 @@ def read_dc(path:str) -> FileDataset:
     return ds
 
 def data_scale(data: np.ndarray, scaler:Optional[StandardScaler]=None) -> Tuple[np.ndarray, StandardScaler] | np.ndarray:
+def crop(vol, mins, maxs):
+    """Crops the input volume.
+
+    Parameters
+    ----------
+    vol : ndarray
+        Volume to crop.
+    mins : array
+        Array containing minimum index of each dimension.
+    maxs : array
+        Array containing maximum index of each dimension.
+
+    Returns
+    -------
+    vol : ndarray
+        The cropped volume.
     """
-    Scales data and gives it back ; if an scaler inserted then no scaler will be returned
+    return vol[tuple(slice(i, j) for i, j in zip(mins, maxs))]
+
+def bounding_box(vol):
+    """Compute the bounding box of nonzero intensity voxels in the volume.
+
+    Parameters
+    ----------
+    vol : ndarray
+        Volume to compute bounding box on.
+
+    Returns
+    -------
+    npmins : list
+        Array containing minimum index of each dimension
+    npmaxs : list
+        Array containing maximum index of each dimension
+    """
+    # Find bounds on first dimension
+    temp = vol
+    for i in range(vol.ndim - 1):
+        temp = temp.any(-1)
+    mins = [temp.argmax()]
+    maxs = [len(temp) - temp[::-1].argmax()]
+    # Check that vol is not all 0
+    if mins[0] == 0 and temp[0] == 0:
+        warn('No data found in volume to bound. Returning empty bounding box.')
+        return [0] * vol.ndim, [0] * vol.ndim
+    # Find bounds on remaining dimensions
+    if vol.ndim > 1:
+        a, b = bounding_box(vol.any(0))
+        mins.extend(a)
+        maxs.extend(b)
+    return mins, maxs
+
+def applymask(vol, mask):
+    """ Mask vol with mask.
+
+    Parameters
+    ----------
+    vol : ndarray
+        Array with $V$ dimensions
+    mask : ndarray
+        Binary mask.  Has $M$ dimensions where $M <= V$. When $M < V$, we
+        append $V - M$ dimensions with axis length 1 to `mask` so that `mask`
+        will broadcast against `vol`.  In the typical case `vol` can be 4D,
+        `mask` can be 3D, and we append a 1 to the mask shape which (via numpy
+        broadcasting) has the effect of applying the 3D mask to each 3D slice in
+        `vol` (``vol[..., 0]`` to ``vol[..., -1``).
+
+    Returns
+    -------
+    masked_vol : ndarray
+        `vol` multiplied by `mask` where `mask` may have been extended to match
+        extra dimensions in `vol`
+    """
+    mask = mask.reshape(mask.shape + (vol.ndim - mask.ndim) * (1,))
+    return vol * mask
 
     data: training data
     scaler: pre-made scaler
+def otsu(image, nbins=256):
     """
+    Return threshold value based on Otsu's method.
+    Copied from scikit-image to remove dependency.
+
+    Parameters
+    ----------
+    image : array
+        Input image.
+    nbins : int
+        Number of bins used to calculate histogram. This value is ignored for
+        integer arrays.
 
     if not scaler:
         scaler_ = StandardScaler()
+    Returns
+    -------
+    threshold : float
+        Threshold value.
+    """
+    hist, bin_centers = np.histogram(image, nbins)
+    hist = hist.astype(float)
+
+    # class probabilities for all possible thresholds
+    weight1 = np.cumsum(hist)
+    weight2 = np.cumsum(hist[::-1])[::-1]
 
     n_samples = data.shape[0]
     data = data.reshape(n_samples * SHAPE[0], SHAPE[-1]) # preparing shape for scaler
     data = scaler_.fit_transform(data) if not scaler else scaler.transform(data)
     data = data.reshape(n_samples, 1, *SHAPE) # returning shape back to initial
+    # class means for all possible thresholds
+    mean1 = np.cumsum(hist * bin_centers[1:]) / weight1
+    mean2 = (np.cumsum((hist * bin_centers[1:])[::-1]) / weight2[::-1])[::-1]
 
     if not scaler:
         return data, scaler_
     else:
         return data
+    # Clip ends to align class 1 and class 2 variables:
+    # The last value of `weight1`/`mean1` should pair with zero values in
+    # `weight2`/`mean2`, which do not exist.
+    variance12 = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:])**2
 
 def data_descale(data: torch.Tensor, scaler:StandardScaler) -> torch.Tensor:
+    idx = np.argmax(variance12)
+    threshold = bin_centers[:-1][idx]
+    return threshold
+
+def cropping(image:np.ndarray) -> np.ndarray:
     """
     Converts image back to how it should be after taking scaler
+    Create a mask to only conclude most valuable regions of brain
 
     data: images to convert back
     scaler: fit scaler to use
@@ -59,8 +166,18 @@ def data_descale(data: torch.Tensor, scaler:StandardScaler) -> torch.Tensor:
     scale = torch.tensor(scaler.scale_, dtype=torch.float32, device=data.device)
     data = (data * scale) + mean
     data = data.reshape(n_samples, 1, *SHAPE)
+    thres = otsu(image)
+    mask = image > thres
+    mask = morphology.remove_small_holes(mask, area_threshold=20000)
+    mins, maxs = bounding_box(mask)
+    mask = crop(mask, mins, maxs)
+    image = crop(image, mins, maxs)
+    image += 1 # letting model see zero values also
+    masked_image = applymask(image, mask)
+    masked_image = resize(masked_image)
 
     return data
+    return masked_image
 
 def segment_brain(image:np.ndarray) -> np.ndarray:
     """
