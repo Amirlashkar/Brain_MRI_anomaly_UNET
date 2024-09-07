@@ -212,26 +212,13 @@ def noise(image: torch.Tensor, noise_res:int, noise_std:float) -> torch.Tensor:
 
     return image.squeeze(0) # shape=(1, *SHAPE) (this is for preparing tensor for torch.stack)
 
-def iterate_patient(patient_path:str) -> Generator:
 def noise_batch(batch:torch.Tensor):
     """
-    Provides image arrays with respect to provided patient path
     Adds noise to each element of a batch
 
-    patient_path: path of images
     batch: batch to add noise to it
     """
 
-    images = os.listdir(patient_path)
-    try:
-        images.remove(".DS_Store")
-    except:
-        pass
-
-    for image in images:
-        image_path = os.path.join(patient_path, image)
-        image_arr = read_dc(image_path).pixel_array
-        yield image_arr
     noised = torch.stack([noise(image.unsqueeze(0), NOISE_RES, NOISE_STD) for image in batch]) # adding noise to raw image
     return noised.to(batch.device)
 
@@ -243,7 +230,46 @@ def resize(image:np.ndarray) -> np.ndarray:
     """
 
     resized_image = cv2.resize(image, SHAPE, interpolation=cv2.INTER_CUBIC)
-    return resized_image
+    return resized_image.astype(np.float32)
+
+def iterate_patient(patient_path:str) -> Generator:
+    """
+    Provides image arrays with respect to provided patient path
+
+    patient_path: path of images
+    """
+
+    volume = os.listdir(patient_path)
+    try:
+        volume.remove(".DS_Store")
+    except:
+        pass
+
+    for image in volume:
+        image_path = os.path.join(patient_path, image)
+        ds = read_dc(image_path)
+        protocol = str(ds["SeriesDescription"].value)
+        slice_loc = float(ds["SliceLocation"].value)
+        slice_ori = str(ds["2001", "100b"].value)
+        # removing non-axial series and neck or vertex slices
+        if not SLICE_START < slice_loc < SLICE_END or slice_ori != "TRANSVERSAL": # filtering neck and vertex-close slices && aslo filtering non-axial slices
+            continue
+
+        image_arr = ds.pixel_array
+        # resizing each image
+        image_arr = resize(image_arr)
+        # crop brain to lower table artifact
+        image_arr = cropping(image_arr)
+        image_arr = image_arr.astype(np.float32)
+        # normalizing image
+        image_arr = (image_arr - image_arr.min()) / (image_arr.max() - image_arr.min())
+        # inversion of t2 weighted images which makes brain regions have positive signal
+        if protocol == "T2W_TSE":
+            mask = masking(image_arr)
+            image_arr = 1 - image_arr
+            image_arr *= mask.astype(np.int8)
+
+        yield image_arr
 
 def rotate(image:np.ndarray) -> np.ndarray:
     """
