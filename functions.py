@@ -462,13 +462,37 @@ def anomaly_scoring(predictions, targets) -> Tuple:
 
     return anomaly_score, residual
 
+def plot_model_inf(originals, reconstructs):
+    """
+    Plotting model inference on each image of test data
+
+    originals: batch of original images
+    reconstructs: batch of reconstructed images by model
+    """
+
+    # reconstructs analysis
+    raw = originals.cpu().detach().numpy()
+    recon = reconstructs.cpu().detach().numpy()
+    for ind, image in enumerate(raw):
+        mask = masking(raw[ind][0])
+        mask = torch.tensor(mask).unsqueeze(0).to(originals.device)
+        mask = mask.cpu().detach().numpy()[0]
+        ra = torch.tensor(image).unsqueeze(0).to(originals.device)
+        re = torch.tensor(recon[ind]).unsqueeze(0).to(originals.device)
+        a_score, residual = anomaly_scoring(re, ra)
+        patches, coors = _patching(residual)
+        _, high_coor = _high_patch(patches, coors)
+        print(f"Anomaly Score: {a_score}")
+        raw_ = image[0]
+        recon_ = recon[ind][0]
+        residual = residual[0].cpu().detach().numpy()
+        plot_org_recon(raw_, recon_, mask, residual, high_coor)
 
 def predict(
         model:torch.nn.Module,
         patients_image:List[torch.Tensor],
         thresholds:Tuple,
-        criterion:torch.nn.Module,
-        scaler:StandardScaler
+        do_plot:bool
     ) -> np.ndarray:
     """
     Provides model-driven labels (predictions)
@@ -476,25 +500,29 @@ def predict(
     model: a model to predict batch with
     patients_image: list of all patients images (each patient may have different count of images)
     thresholds: avg and std of training phase pixel-wise model loss
+    do_plot: should function plot inferences or not
     """
 
     predictions = []
     for i, patient in enumerate(patients_image):
         print(f"{i+1} from {len(patients_image)}")
-        reconstructs = model(patient)
-        d_patient = data_descale(patient, scaler)
-        d_reconstructs = data_descale(reconstructs, scaler)
-        # raw = d_patient.cpu().detach().numpy()[0][0]
-        # recon = d_reconstructs.cpu().detach().numpy()[0][0]
-        # plot_org_recon(raw, recon)
-        loss = criterion(d_reconstructs, d_patient).item()
-        avg, std = thresholds
 
-        if not (loss < avg + std):
-            predictions.append(1)
-        else:
-            predictions.append(0)
+        with torch.no_grad():
+            reconstructs = model(patient)
 
-        print(f"Loss: {loss} | Threshold: {avg + std}")
+            if do_plot:
+                plot_model_inf(patient, reconstructs)
 
-    return np.array(predictions, dtype=np.int8)
+            anomaly_score, _ = anomaly_scoring(reconstructs, patient)
+            avg, std = thresholds
+            thres = avg + .5*std
+
+            if anomaly_score > thres:
+                predictions.append(1)
+            else:
+                predictions.append(0)
+
+            print(f"Anomaly Score Mean: {anomaly_score} | Threshold: {thres}")
+
+    return np.array(predictions)
+
