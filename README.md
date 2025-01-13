@@ -19,14 +19,15 @@ This repository contains the source code for a deep learning project designed to
 └── README.md             # Project overview (this file)
 ```
 ## Usage
-```plaintext
+
 Decide if you want to only fit or get inferences of already trained model or both and change last lines of `trainer.py` due to your need.
-```
+
 ## License
-```plaintext
+
 This project is licensed under the [MIT License](LICENSE), which allows for personal, academic, or commercial use with the conditions outlined in the license.
-```
+
 ## Medium Article
-```plaintext
+
 You can read more about this project in detail on [Medium](https://medium.com/@amireza1422/brain-mri-sequences-t1-t2-t2-flair-anomaly-detection-with-2d-u-net-8ceaf8712124).
-```
+
+Please contact me for access to the model weights.
