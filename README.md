@@ -29,5 +29,3 @@ This project is licensed under the [MIT License](LICENSE), which allows for pers
 ## Medium Article
 
 You can read more about this project in detail on [Medium](https://medium.com/@amireza1422/brain-mri-sequences-t1-t2-t2-flair-anomaly-detection-with-2d-u-net-8ceaf8712124).
-
-Please contact me for access to the model weights.
